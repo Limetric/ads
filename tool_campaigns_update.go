@@ -109,22 +109,22 @@ func validateBiddingTargetValues(cpa, roas float64) error {
 	return nil
 }
 
-// resolveCampaignBiddingStrategy returns the campaign's current standard
-// bidding strategy type. Target-only updates must preserve the active bidding
-// strategy oneof, so they resolve this before staging a mutation. Portfolio
-// strategies are rejected because their targets belong to the shared bidding
-// strategy resource rather than the campaign.
-func resolveCampaignBiddingStrategy(ctx context.Context, c *Client, customerID, campaignID string) (string, error) {
+type campaignBiddingStrategyState struct {
+	Type      string
+	Portfolio string
+}
+
+func fetchCampaignBiddingStrategyState(ctx context.Context, c *Client, customerID, campaignID string) (campaignBiddingStrategyState, error) {
 	if c == nil {
-		return "", fmt.Errorf("could not resolve the bidding strategy for campaign %s: Google Ads client is unavailable", campaignID)
+		return campaignBiddingStrategyState{}, fmt.Errorf("could not resolve the bidding strategy for campaign %s: Google Ads client is unavailable", campaignID)
 	}
 	q := fmt.Sprintf("SELECT campaign.bidding_strategy_type, campaign.bidding_strategy FROM campaign WHERE campaign.id = %s", campaignID)
 	rows, err := c.Search(ctx, customerID, q)
 	if err != nil {
-		return "", fmt.Errorf("could not resolve the bidding strategy for campaign %s: %w", campaignID, err)
+		return campaignBiddingStrategyState{}, fmt.Errorf("could not resolve the bidding strategy for campaign %s: %w", campaignID, err)
 	}
 	if len(rows) == 0 {
-		return "", fmt.Errorf("could not resolve the bidding strategy for campaign %s — the campaign may not exist", campaignID)
+		return campaignBiddingStrategyState{}, fmt.Errorf("could not resolve the bidding strategy for campaign %s — the campaign may not exist", campaignID)
 	}
 	var row struct {
 		Campaign struct {
@@ -133,15 +133,47 @@ func resolveCampaignBiddingStrategy(ctx context.Context, c *Client, customerID, 
 		} `json:"campaign"`
 	}
 	if err := json.Unmarshal(rows[0], &row); err != nil {
-		return "", fmt.Errorf("could not decode the bidding strategy for campaign %s: %w", campaignID, err)
-	}
-	if row.Campaign.BiddingStrategy != "" {
-		return "", fmt.Errorf("campaign %s uses portfolio bidding strategy %s — target-only campaign updates are not supported for shared strategies; update the portfolio strategy or specify bidding_strategy to switch to a standard strategy", campaignID, row.Campaign.BiddingStrategy)
+		return campaignBiddingStrategyState{}, fmt.Errorf("could not decode the bidding strategy for campaign %s: %w", campaignID, err)
 	}
 	if row.Campaign.BiddingStrategyType == "" {
-		return "", fmt.Errorf("could not resolve the bidding strategy for campaign %s — Google Ads returned no bidding strategy type", campaignID)
+		return campaignBiddingStrategyState{}, fmt.Errorf("could not resolve the bidding strategy for campaign %s — Google Ads returned no bidding strategy type", campaignID)
 	}
-	return row.Campaign.BiddingStrategyType, nil
+	return campaignBiddingStrategyState{
+		Type:      row.Campaign.BiddingStrategyType,
+		Portfolio: row.Campaign.BiddingStrategy,
+	}, nil
+}
+
+// resolveCampaignBiddingStrategy returns the campaign's current standard
+// bidding strategy type. Target-only updates must preserve the active bidding
+// strategy oneof, so they resolve this before staging a mutation. Portfolio
+// strategies are rejected because their targets belong to the shared bidding
+// strategy resource rather than the campaign.
+func resolveCampaignBiddingStrategy(ctx context.Context, c *Client, customerID, campaignID string) (string, error) {
+	state, err := fetchCampaignBiddingStrategyState(ctx, c, customerID, campaignID)
+	if err != nil {
+		return "", err
+	}
+	if state.Portfolio != "" {
+		return "", fmt.Errorf("campaign %s uses portfolio bidding strategy %s — target-only campaign updates are not supported for shared strategies; update the portfolio strategy or specify bidding_strategy to switch to a standard strategy", campaignID, state.Portfolio)
+	}
+	return state.Type, nil
+}
+
+func biddingStrategyAllowsEmptyUpdate(strategy string) bool {
+	switch strategy {
+	case "MAXIMIZE_CONVERSIONS", "MAXIMIZE_CONVERSION_VALUE", "MANUAL_CPC", "TARGET_SPEND", "MAXIMIZE_CLICKS", "PERCENT_CPC":
+		return true
+	default:
+		return false
+	}
+}
+
+func canonicalBiddingStrategy(strategy string) string {
+	if strategy == "MAXIMIZE_CLICKS" {
+		return "TARGET_SPEND"
+	}
+	return strategy
 }
 
 // resolveCampaignBudgetResource looks up a campaign's budget resource name and
@@ -253,6 +285,19 @@ func runUpdateCampaign(ctx context.Context, c *Client, args UpdateCampaignArgs) 
 		strategy, err = resolveCampaignBiddingStrategy(ctx, c, cid, campaignID)
 		if err != nil {
 			return WriteResult{}, toolError(tool, err)
+		}
+	}
+	if strategy != "" && args.TargetCPA == 0 && args.TargetROAS == 0 && biddingStrategyAllowsEmptyUpdate(strategy) {
+		current, err := fetchCampaignBiddingStrategyState(ctx, c, cid, campaignID)
+		if err != nil {
+			return WriteResult{}, toolError(tool, err)
+		}
+		// Masking an omitted leaf clears it. A redundant strategy-only update
+		// must therefore be a no-op, or it could silently remove an existing
+		// target, bid ceiling, or enhanced-CPC setting. A portfolio resource is
+		// not redundant: the explicit strategy selects a standard strategy.
+		if current.Portfolio == "" && current.Type == canonicalBiddingStrategy(strategy) {
+			strategy = ""
 		}
 	}
 	if strategy != "" {

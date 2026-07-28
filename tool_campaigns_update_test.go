@@ -398,7 +398,7 @@ func TestUpdateCampaign_RejectsInvalidTargetCombinationsBeforeLookup(t *testing.
 	}
 }
 
-func TestUpdateCampaign_ExplicitStrategyDoesNotLookupCurrentStrategy(t *testing.T) {
+func TestUpdateCampaign_ExplicitStrategySwitchUsesLeafMasks(t *testing.T) {
 	useTempState(t)
 	var searchCalls int
 	var mutateCalls int
@@ -408,7 +408,7 @@ func TestUpdateCampaign_ExplicitStrategyDoesNotLookupCurrentStrategy(t *testing.
 		switch {
 		case strings.HasSuffix(r.URL.Path, "googleAds:search"):
 			searchCalls++
-			_, _ = w.Write([]byte(`{"results":[]}`))
+			_, _ = w.Write([]byte(`{"results":[{"campaign":{"biddingStrategyType":"MANUAL_CPC"}}]}`))
 		case strings.HasSuffix(r.URL.Path, "googleAds:mutate"):
 			mutateCalls++
 			_ = decodeJSONBody(r, &mutateBody)
@@ -431,8 +431,8 @@ func TestUpdateCampaign_ExplicitStrategyDoesNotLookupCurrentStrategy(t *testing.
 	if _, err := runUpdateCampaign(t.Context(), c, args); err != nil {
 		t.Fatalf("confirm: %v", err)
 	}
-	if searchCalls != 0 {
-		t.Errorf("explicit strategy made %d search calls", searchCalls)
+	if searchCalls != 1 {
+		t.Errorf("current-strategy search calls = %d, want 1", searchCalls)
 	}
 	if mutateCalls != 1 {
 		t.Errorf("mutate calls = %d, want 1", mutateCalls)
@@ -448,6 +448,111 @@ func TestUpdateCampaign_ExplicitStrategyDoesNotLookupCurrentStrategy(t *testing.
 	message, _ := update["maximizeConversionValue"].(map[string]any)
 	if message == nil || len(message) != 0 {
 		t.Errorf("update maximizeConversionValue = %v, want empty message", update["maximizeConversionValue"])
+	}
+}
+
+func TestUpdateCampaign_RedundantStrategyOnlyPreservesExistingSettings(t *testing.T) {
+	tests := []struct {
+		name      string
+		requested string
+		current   string
+	}{
+		{"maximize conversions", "MAXIMIZE_CONVERSIONS", "MAXIMIZE_CONVERSIONS"},
+		{"maximize conversion value", "MAXIMIZE_CONVERSION_VALUE", "MAXIMIZE_CONVERSION_VALUE"},
+		{"manual cpc", "MANUAL_CPC", "MANUAL_CPC"},
+		{"target spend", "TARGET_SPEND", "TARGET_SPEND"},
+		{"maximize clicks alias", "MAXIMIZE_CLICKS", "TARGET_SPEND"},
+		{"percent cpc", "PERCENT_CPC", "PERCENT_CPC"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			useTempState(t)
+			var searchCalls int
+			var mutateBody map[string]any
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case strings.HasSuffix(r.URL.Path, "googleAds:search"):
+					searchCalls++
+					_, _ = w.Write([]byte(`{"results":[{"campaign":{"biddingStrategyType":"` + tc.current + `"}}]}`))
+				case strings.HasSuffix(r.URL.Path, "googleAds:mutate"):
+					_ = decodeJSONBody(r, &mutateBody)
+					_, _ = w.Write([]byte(`{"mutateOperationResponses":[{}]}`))
+				}
+			}))
+			defer srv.Close()
+			c := newTestClient(t, srv)
+
+			args := UpdateCampaignArgs{
+				CustomerID:      "1",
+				CampaignID:      "5",
+				BiddingStrategy: tc.requested,
+				GeoTargetIDs:    []string{"2840"},
+			}
+			preview, err := runUpdateCampaign(t.Context(), c, args)
+			if err != nil {
+				t.Fatalf("preview: %v", err)
+			}
+			args.Confirm = preview.Token
+			if _, err := runUpdateCampaign(t.Context(), c, args); err != nil {
+				t.Fatalf("confirm: %v", err)
+			}
+			if searchCalls != 1 {
+				t.Errorf("current-strategy search calls = %d, want 1", searchCalls)
+			}
+			ops, _ := mutateBody["mutateOperations"].([]any)
+			if len(ops) != 1 {
+				t.Fatalf("mutate operations = %v, want only the geo criterion", mutateBody["mutateOperations"])
+			}
+			op, _ := ops[0].(map[string]any)
+			if _, ok := op["campaignOperation"]; ok {
+				t.Fatalf("redundant strategy staged a campaign update: %v", op)
+			}
+			if _, ok := op["campaignCriterionOperation"]; !ok {
+				t.Fatalf("expected geo criterion operation, got %v", op)
+			}
+		})
+	}
+}
+
+func TestUpdateCampaign_PortfolioStrategyStillSwitchesToStandard(t *testing.T) {
+	useTempState(t)
+	var mutateBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "googleAds:search"):
+			_, _ = w.Write([]byte(`{"results":[{"campaign":{"biddingStrategyType":"MAXIMIZE_CONVERSION_VALUE","biddingStrategy":"customers/1/biddingStrategies/7"}}]}`))
+		case strings.HasSuffix(r.URL.Path, "googleAds:mutate"):
+			_ = decodeJSONBody(r, &mutateBody)
+			_, _ = w.Write([]byte(`{"mutateOperationResponses":[{}]}`))
+		}
+	}))
+	defer srv.Close()
+	c := newTestClient(t, srv)
+
+	args := UpdateCampaignArgs{
+		CustomerID:      "1",
+		CampaignID:      "5",
+		BiddingStrategy: "MAXIMIZE_CONVERSION_VALUE",
+	}
+	preview, err := runUpdateCampaign(t.Context(), c, args)
+	if err != nil {
+		t.Fatalf("preview: %v", err)
+	}
+	args.Confirm = preview.Token
+	if _, err := runUpdateCampaign(t.Context(), c, args); err != nil {
+		t.Fatalf("confirm: %v", err)
+	}
+	ops, _ := mutateBody["mutateOperations"].([]any)
+	if len(ops) != 1 {
+		t.Fatalf("mutate operations = %v, want one strategy switch", mutateBody["mutateOperations"])
+	}
+	outer, _ := ops[0].(map[string]any)
+	op, _ := outer["campaignOperation"].(map[string]any)
+	wantMask := "maximizeConversionValue.targetRoas,maximizeConversionValue.targetRoasTolerancePercentMillis"
+	if op["updateMask"] != wantMask {
+		t.Errorf("updateMask = %v, want %s", op["updateMask"], wantMask)
 	}
 }
 
