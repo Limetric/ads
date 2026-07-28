@@ -18,8 +18,13 @@ import (
 // and records the touched fields in mask. In v23 bidding_strategy_type is
 // OUTPUT_ONLY, so the strategy is selected by setting the matching sub-field;
 // unknown strategies and missing targets error at preview time rather than
-// staging an op Google will reject at confirm (issue #8).
+// staging an op Google will reject at confirm (issue #8). Message fields with
+// defined subfields cannot appear bare in a field mask, even when the message
+// is empty; those strategy selections mask every mutable leaf instead.
 func applyBiddingStrategyUpdate(campaign map[string]any, mask *[]string, strategy string, cpa, roas float64) error {
+	if err := validateBiddingStrategyTargets(strategy, cpa, roas); err != nil {
+		return err
+	}
 	switch strategy {
 	case "MAXIMIZE_CONVERSIONS":
 		mc := map[string]any{}
@@ -27,32 +32,40 @@ func applyBiddingStrategyUpdate(campaign map[string]any, mask *[]string, strateg
 			mc["targetCpaMicros"] = microsString(dollarsToMicros(cpa))
 		}
 		campaign["maximizeConversions"] = mc
-		*mask = append(*mask, "maximizeConversions")
+		*mask = append(*mask, "maximizeConversions.targetCpaMicros")
 	case "MAXIMIZE_CONVERSION_VALUE":
 		mcv := map[string]any{}
 		if roas != 0 {
 			mcv["targetRoas"] = roas
+			*mask = append(*mask, "maximizeConversionValue.targetRoas")
+		} else {
+			*mask = append(*mask,
+				"maximizeConversionValue.targetRoas",
+				"maximizeConversionValue.targetRoasTolerancePercentMillis",
+			)
 		}
 		campaign["maximizeConversionValue"] = mcv
-		*mask = append(*mask, "maximizeConversionValue")
 	case "TARGET_CPA":
 		if cpa == 0 {
 			return fmt.Errorf("TARGET_CPA requires target_cpa (currency units)")
 		}
 		campaign["targetCpa"] = map[string]any{"targetCpaMicros": microsString(dollarsToMicros(cpa))}
-		*mask = append(*mask, "targetCpa")
+		*mask = append(*mask, "targetCpa.targetCpaMicros")
 	case "TARGET_ROAS":
 		if roas == 0 {
 			return fmt.Errorf("TARGET_ROAS requires target_roas (a ratio, e.g. 3.5)")
 		}
 		campaign["targetRoas"] = map[string]any{"targetRoas": roas}
-		*mask = append(*mask, "targetRoas")
+		*mask = append(*mask, "targetRoas.targetRoas")
 	case "MANUAL_CPC":
 		campaign["manualCpc"] = map[string]any{}
-		*mask = append(*mask, "manualCpc")
+		*mask = append(*mask, "manualCpc.enhancedCpcEnabled")
 	case "TARGET_SPEND", "MAXIMIZE_CLICKS":
 		campaign["targetSpend"] = map[string]any{}
-		*mask = append(*mask, "targetSpend")
+		*mask = append(*mask,
+			"targetSpend.cpcBidCeilingMicros",
+			"targetSpend.targetSpendMicros",
+		)
 	case "TARGET_IMPRESSION_SHARE":
 		// v23 requires location + fraction (and optionally a CPC ceiling) —
 		// an empty object previews fine and is rejected at confirm. Use
@@ -60,11 +73,75 @@ func applyBiddingStrategyUpdate(campaign map[string]any, mask *[]string, strateg
 		return fmt.Errorf("TARGET_IMPRESSION_SHARE cannot be set via update_campaign (it requires location/fraction/ceiling parameters) — create it with create_portfolio_bidding_strategy instead")
 	case "PERCENT_CPC":
 		campaign["percentCpc"] = map[string]any{}
-		*mask = append(*mask, "percentCpc")
+		*mask = append(*mask,
+			"percentCpc.cpcBidCeilingMicros",
+			"percentCpc.enhancedCpcEnabled",
+		)
 	default:
 		return fmt.Errorf("unsupported bidding strategy %q — use one of MAXIMIZE_CONVERSIONS, MAXIMIZE_CONVERSION_VALUE, TARGET_CPA, TARGET_ROAS, MANUAL_CPC, TARGET_SPEND/MAXIMIZE_CLICKS, PERCENT_CPC", strategy)
 	}
 	return nil
+}
+
+func validateBiddingStrategyTargets(strategy string, cpa, roas float64) error {
+	if err := validateBiddingTargetValues(cpa, roas); err != nil {
+		return err
+	}
+	if cpa != 0 && strategy != "TARGET_CPA" && strategy != "MAXIMIZE_CONVERSIONS" {
+		return fmt.Errorf("target_cpa cannot be set with bidding strategy %s — use TARGET_CPA or MAXIMIZE_CONVERSIONS as bidding_strategy", strategy)
+	}
+	if roas != 0 && strategy != "TARGET_ROAS" && strategy != "MAXIMIZE_CONVERSION_VALUE" {
+		return fmt.Errorf("target_roas cannot be set with bidding strategy %s — use TARGET_ROAS or MAXIMIZE_CONVERSION_VALUE as bidding_strategy", strategy)
+	}
+	return nil
+}
+
+func validateBiddingTargetValues(cpa, roas float64) error {
+	if cpa < 0 {
+		return fmt.Errorf("target_cpa must be positive (currency units), got %v", cpa)
+	}
+	if roas < 0 {
+		return fmt.Errorf("target_roas must be positive (a ratio, e.g. 3.5), got %v", roas)
+	}
+	if cpa != 0 && roas != 0 {
+		return fmt.Errorf("target_cpa and target_roas cannot be updated together — choose the target used by bidding_strategy")
+	}
+	return nil
+}
+
+// resolveCampaignBiddingStrategy returns the campaign's current standard
+// bidding strategy type. Target-only updates must preserve the active bidding
+// strategy oneof, so they resolve this before staging a mutation. Portfolio
+// strategies are rejected because their targets belong to the shared bidding
+// strategy resource rather than the campaign.
+func resolveCampaignBiddingStrategy(ctx context.Context, c *Client, customerID, campaignID string) (string, error) {
+	if c == nil {
+		return "", fmt.Errorf("could not resolve the bidding strategy for campaign %s: Google Ads client is unavailable", campaignID)
+	}
+	q := fmt.Sprintf("SELECT campaign.bidding_strategy_type, campaign.bidding_strategy FROM campaign WHERE campaign.id = %s", campaignID)
+	rows, err := c.Search(ctx, customerID, q)
+	if err != nil {
+		return "", fmt.Errorf("could not resolve the bidding strategy for campaign %s: %w", campaignID, err)
+	}
+	if len(rows) == 0 {
+		return "", fmt.Errorf("could not resolve the bidding strategy for campaign %s — the campaign may not exist", campaignID)
+	}
+	var row struct {
+		Campaign struct {
+			BiddingStrategyType string `json:"biddingStrategyType"`
+			BiddingStrategy     string `json:"biddingStrategy"`
+		} `json:"campaign"`
+	}
+	if err := json.Unmarshal(rows[0], &row); err != nil {
+		return "", fmt.Errorf("could not decode the bidding strategy for campaign %s: %w", campaignID, err)
+	}
+	if row.Campaign.BiddingStrategy != "" {
+		return "", fmt.Errorf("campaign %s uses portfolio bidding strategy %s — target-only campaign updates are not supported for shared strategies; update the portfolio strategy or specify bidding_strategy to switch to a standard strategy", campaignID, row.Campaign.BiddingStrategy)
+	}
+	if row.Campaign.BiddingStrategyType == "" {
+		return "", fmt.Errorf("could not resolve the bidding strategy for campaign %s — Google Ads returned no bidding strategy type", campaignID)
+	}
+	return row.Campaign.BiddingStrategyType, nil
 }
 
 // resolveCampaignBudgetResource looks up a campaign's budget resource name and
@@ -134,6 +211,14 @@ func runUpdateCampaign(ctx context.Context, c *Client, args UpdateCampaignArgs) 
 		return WriteResult{}, err
 	}
 	campaignResource := fmt.Sprintf("customers/%s/campaigns/%s", cid, campaignID)
+	if err := validateBiddingTargetValues(args.TargetCPA, args.TargetROAS); err != nil {
+		return WriteResult{}, err
+	}
+	if args.BiddingStrategy != "" {
+		if err := validateBiddingStrategyTargets(args.BiddingStrategy, args.TargetCPA, args.TargetROAS); err != nil {
+			return WriteResult{}, err
+		}
+	}
 	var ops []any
 	doubleConfirm := false
 
@@ -160,11 +245,20 @@ func runUpdateCampaign(ctx context.Context, c *Client, args UpdateCampaignArgs) 
 		}})
 	}
 
-	// Bidding strategy update.
-	if args.BiddingStrategy != "" {
+	// Bidding strategy update. A target can stand alone when the campaign
+	// already uses a compatible strategy; resolve that strategy so setting the
+	// target leaf preserves the current bidding oneof.
+	strategy := args.BiddingStrategy
+	if strategy == "" && (args.TargetCPA != 0 || args.TargetROAS != 0) {
+		strategy, err = resolveCampaignBiddingStrategy(ctx, c, cid, campaignID)
+		if err != nil {
+			return WriteResult{}, toolError(tool, err)
+		}
+	}
+	if strategy != "" {
 		update := map[string]any{"resourceName": campaignResource}
 		var mask []string
-		if err := applyBiddingStrategyUpdate(update, &mask, args.BiddingStrategy, args.TargetCPA, args.TargetROAS); err != nil {
+		if err := applyBiddingStrategyUpdate(update, &mask, strategy, args.TargetCPA, args.TargetROAS); err != nil {
 			return WriteResult{}, err
 		}
 		ops = append(ops, map[string]any{"campaignOperation": map[string]any{"update": update, "updateMask": strings.Join(mask, ",")}})
