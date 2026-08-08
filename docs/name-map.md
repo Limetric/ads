@@ -188,9 +188,18 @@ them instead of a flat global `Config`.
 | Homebrew formula | `Formula/goads.rb`, `class Goads` | `Formula/ads.rb`, `class Ads` |
 | Homebrew install | `brew install Limetric/tap/goads` | `brew install Limetric/tap/ads` |
 | Claude Code plugin | `goads@goads` | `ads@goads` |
+| Codex plugin | `goads@goads` | `ads@goads` |
+| Marketplace ID | `goads` | unchanged |
 | Skill | `plugins/goads/skills/goads` | `plugins/ads/skills/ads` |
 | Go module / repo | `github.com/Limetric/goads` | unchanged |
 | Config directory | `~/.config/goads` | `~/.config/ads` |
+
+The plugin refs are `<plugin>@<marketplace>`. The **marketplace** ID is the repo
+(`Limetric/goads`), which this change does not rename, so it stays `goads` in
+both `.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json`;
+only the plugin inside it becomes `ads`. Keep the two manifests' `name` fields
+in step — renaming one and not the other silently breaks the install command for
+one host.
 
 The config directory (which holds `config.toml`, the confirm-token store, and
 the audit log) moves with the binary. There is **no fallback** to the old path:
