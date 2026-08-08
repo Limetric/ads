@@ -119,7 +119,7 @@ func writeOAuthToConfig(path string, c clientCreds, refreshToken string) error {
 	})
 }
 
-// configWriteTarget returns the file goads login should write to: the explicit
+// configWriteTarget returns the file `ads login google` should write to: the explicit
 // --config path if given, otherwise the default per-user config.toml.
 func configWriteTarget(explicit string) (string, error) {
 	if explicit != "" {
@@ -134,7 +134,7 @@ func configWriteTarget(explicit string) (string, error) {
 
 // resolveLoginCreds picks the client credentials: an explicit --credentials file
 // wins; otherwise fall back to the already-resolved env/TOML config.
-func resolveLoginCreds(cfg *Config, credentialsPath string) (clientCreds, error) {
+func resolveLoginCreds(cfg *GoogleConfig, credentialsPath string) (clientCreds, error) {
 	if credentialsPath != "" {
 		data, err := os.ReadFile(credentialsPath)
 		if err != nil {
@@ -281,21 +281,21 @@ func openBrowser(url string) error {
 	return exec.Command(name, args...).Start()
 }
 
-// loadLoginConfig loads configuration for `login`. Unlike loadConfig, it
+// loadLoginConfig loads Google configuration for `login`. Unlike loadGoogleConfig, it
 // tolerates an explicit --config path that does not exist yet: that file is
 // the one login will create, so a missing target means "load env only".
-func loadLoginConfig(path string) (*Config, error) {
+func loadLoginConfig(path string) (*GoogleConfig, error) {
 	if path != "" {
 		if _, err := os.Stat(path); err != nil {
 			if errors.Is(err, os.ErrNotExist) {
-				cfg := &Config{}
+				cfg := &GoogleConfig{}
 				cfg.finalize()
 				return cfg, nil
 			}
 			return nil, fmt.Errorf("stat config %q: %w", path, err)
 		}
 	}
-	return loadConfig(path)
+	return loadGoogleConfig(path)
 }
 
 var (
@@ -305,7 +305,7 @@ var (
 	loginNoInput         bool
 )
 
-// isInteractiveLogin reports whether `goads login` should run the guided wizard:
+// isInteractiveLogin reports whether `ads login google` should run the guided wizard:
 // stdin is a real terminal, --no-input was not passed, and the non-interactive
 // --credentials shortcut was not used.
 func isInteractiveLogin() bool {
@@ -315,10 +315,10 @@ func isInteractiveLogin() bool {
 	return term.IsTerminal(int(os.Stdin.Fd()))
 }
 
-var loginCmd = &cobra.Command{
-	Use:   "login",
+var googleLoginCmd = &cobra.Command{
+	Use:   "google",
 	Short: "Sign in to Google Ads via OAuth2 and save a refresh token",
-	Long:  "login runs Google's loopback OAuth2 flow: it opens your browser, captures the\nauthorization code on localhost, exchanges it for a refresh token, and writes\nthe credentials into your goads config. The developer token is still required\nseparately (see `goads doctor`).",
+	Long:  "Runs Google's loopback OAuth2 flow: it opens your browser, captures the\nauthorization code on localhost, exchanges it for a refresh token, and writes\nthe credentials into your ads config. The developer token is still required\nseparately (see `ads doctor google`).",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		if isInteractiveLogin() {
@@ -412,14 +412,14 @@ var loginCmd = &cobra.Command{
 		fmt.Fprintf(out, "  export GOOGLE_ADS_CLIENT_ID=%q\n", creds.clientID)
 		fmt.Fprintf(out, "  export GOOGLE_ADS_CLIENT_SECRET=%q\n", creds.clientSecret)
 		fmt.Fprintf(out, "  export GOOGLE_ADS_REFRESH_TOKEN=%q\n\n", refreshToken)
-		fmt.Fprintln(out, "Run `goads doctor` to verify. (developer token still required.)")
+		fmt.Fprintln(out, "Run `ads doctor google` to verify. (developer token still required.)")
 		return nil
 	},
 }
 
 func init() {
-	loginCmd.Flags().StringVar(&loginCredentialsPath, "credentials", "", "path to a Desktop-app OAuth client JSON downloaded from Google Cloud Console")
-	loginCmd.Flags().IntVar(&loginPort, "port", 8085, "loopback port for the OAuth callback")
-	loginCmd.Flags().BoolVar(&loginNoBrowser, "no-browser", false, "print the auth URL instead of opening a browser")
-	loginCmd.Flags().BoolVar(&loginNoInput, "no-input", false, "never prompt; fail if credentials are missing (for scripts/CI)")
+	googleLoginCmd.Flags().StringVar(&loginCredentialsPath, "credentials", "", "path to a Desktop-app OAuth client JSON downloaded from Google Cloud Console")
+	googleLoginCmd.Flags().IntVar(&loginPort, "port", 8085, "loopback port for the OAuth callback")
+	googleLoginCmd.Flags().BoolVar(&loginNoBrowser, "no-browser", false, "print the auth URL instead of opening a browser")
+	googleLoginCmd.Flags().BoolVar(&loginNoInput, "no-input", false, "never prompt; fail if credentials are missing (for scripts/CI)")
 }

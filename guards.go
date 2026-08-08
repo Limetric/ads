@@ -85,7 +85,7 @@ func checkBidIncrease(currentBid, proposedBid float64, cfg SafetyConfig) error {
 }
 
 // revalidateBudgetCaps re-checks the daily-budget cap for every staged
-// campaign-budget amount in a pending mutation's operations. `goads confirm`
+// campaign-budget amount in a pending mutation's operations. `ads confirm`
 // runs it against the CURRENT configuration before consuming a token, so
 // tightening GOOGLE_ADS_MAX_DAILY_BUDGET between preview and confirm is
 // enforced on the generic confirm path just as re-running the original

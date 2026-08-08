@@ -17,7 +17,7 @@ var configCmd = &cobra.Command{
 
 var configPathCmd = &cobra.Command{
 	Use:   "path",
-	Short: "Print the config path selected by goads",
+	Short: "Print the config path selected by ads",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		resolved, err := resolveConfigPath(configPath)
@@ -35,7 +35,8 @@ var configPathCmd = &cobra.Command{
 
 // configShowCmd prints the fully resolved configuration (file + env overlay)
 // with credentials redacted, so users can see which values are in effect
-// without exposing secrets in scrollback or logs.
+// without exposing secrets in scrollback or logs. The config file is shared;
+// each platform renders its own section.
 var configShowCmd = &cobra.Command{
 	Use:   "show",
 	Short: "Print the resolved configuration (secrets redacted)",
@@ -45,63 +46,23 @@ var configShowCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("resolve config path: %w", err)
 		}
-		cfg, err := loadConfig(configPath)
-		if err != nil {
-			return err
-		}
 		source := resolved
 		if source == "" {
 			source = "(none — environment only)"
 		}
 		out := cmd.OutOrStdout()
 		fmt.Fprintf(out, "config file:          %s\n", source)
-		fmt.Fprintf(out, "base url:             %s\n", cfg.BaseURL)
-		fmt.Fprintf(out, "developer token:      %s\n", redactSecret(cfg.DeveloperToken))
-		fmt.Fprintf(out, "client id:            %s\n", orNone(cfg.ClientID))
-		fmt.Fprintf(out, "client secret:        %s\n", redactSecret(cfg.ClientSecret))
-		fmt.Fprintf(out, "refresh token:        %s\n", redactSecret(cfg.RefreshToken))
-		fmt.Fprintf(out, "login customer id:    %s\n", orNone(cfg.LoginCustomerID))
-		fmt.Fprintf(out, "default customer id:  %s\n", orNone(cfg.DefaultCustomerID))
+		for _, p := range platforms() {
+			if p.ShowConfig == nil {
+				continue
+			}
+			fmt.Fprintf(out, "\n[%s] %s\n", p.Name, p.Title)
+			if err := p.ShowConfig(out); err != nil {
+				return err
+			}
+		}
 		return nil
 	},
-}
-
-// configSetCustomerCmd persists default_customer_id so every command can omit
-// --customer-id. Note GOOGLE_ADS_CUSTOMER_ID still overrides the file value.
-var configSetCustomerCmd = &cobra.Command{
-	Use:   "set-customer <customer-id>",
-	Short: "Persist a default customer ID so --customer-id can be omitted",
-	Long:  "Write default_customer_id to the goads config file (the --config path if given,\notherwise the default location — see `goads config path`).\n\nOther keys in the file are preserved, but comments are not: the file is\nre-encoded from its parsed form. GOOGLE_ADS_CUSTOMER_ID overrides the file value.",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		id := normalizeCustomerID(args[0])
-		if !validCustomerIDFormat(id) {
-			return fmt.Errorf("invalid customer ID %q — expected 10 digits, e.g. 123-456-7890", args[0])
-		}
-		path, err := writableConfigPath(configPath)
-		if err != nil {
-			return err
-		}
-		if err := upsertConfigKey(path, "default_customer_id", id); err != nil {
-			return err
-		}
-		fmt.Fprintf(cmd.OutOrStdout(), "default customer ID set to %s in %s\n", id, path)
-		return nil
-	},
-}
-
-// validCustomerIDFormat reports whether id (already normalized) looks like a
-// Google Ads customer ID: exactly 10 digits.
-func validCustomerIDFormat(id string) bool {
-	if len(id) != 10 {
-		return false
-	}
-	for _, r := range id {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return true
 }
 
 // writableConfigPath returns the config file to write settings to: the
@@ -186,5 +147,4 @@ func redactSecret(s string) string {
 func init() {
 	configCmd.AddCommand(configPathCmd)
 	configCmd.AddCommand(configShowCmd)
-	configCmd.AddCommand(configSetCustomerCmd)
 }

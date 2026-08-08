@@ -9,8 +9,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// `goads audit` surfaces the audit log that safety.go appends to on every
-// confirmed write (success or failure): what goads changed, when, on which
+// `ads audit` surfaces the audit log that safety.go appends to on every
+// confirmed write (success or failure): what ads changed, when, on which
 // customer, with which token. It closes the safety loop — the log existed but
 // nothing displayed it (issue #17).
 
@@ -41,7 +41,7 @@ var auditLimit int
 
 var auditCmd = &cobra.Command{
 	Use:   "audit",
-	Short: "Show the log of writes goads has applied (and failed applies)",
+	Short: "Show the log of writes ads has applied (and failed applies)",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		entries, err := readAuditLog()

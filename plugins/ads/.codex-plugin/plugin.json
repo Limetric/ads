@@ -1,0 +1,33 @@
+{
+  "name": "ads",
+  "version": "0.1.0",
+  "description": "Teaches Codex to drive the ads CLI for Google Ads \u2014 GAQL reads and preview-then-confirm writes.",
+  "author": {
+    "name": "Limetric",
+    "url": "https://github.com/Limetric"
+  },
+  "repository": "https://github.com/Limetric/goads",
+  "keywords": [
+    "google-ads",
+    "gaql",
+    "advertising",
+    "cli"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "ads",
+    "shortDescription": "Drive the ads CLI for Google Ads \u2014 GAQL reads and preview-then-confirm writes.",
+    "longDescription": "Teaches an agent when and how to drive the ads CLI: GAQL search/report reads, account listing, and preview-then-confirm writes against campaigns, ad groups, keywords, and budgets.",
+    "developerName": "Limetric",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "What's my campaign spend this week?",
+      "Set this campaign's daily budget to $50.",
+      "List my accessible Google Ads accounts."
+    ]
+  }
+}

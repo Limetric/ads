@@ -179,7 +179,7 @@ func TestListAccessibleCustomers(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	cfg := &Config{BaseURL: srv.URL} // non-prod base → isTest(), lenient auth
+	cfg := &GoogleConfig{BaseURL: srv.URL} // non-prod base → isTest(), lenient auth
 	c, err := NewClient(context.Background(), cfg)
 	if err != nil {
 		t.Fatal(err)

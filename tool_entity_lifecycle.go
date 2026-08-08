@@ -141,7 +141,7 @@ func entityCmd(use, short string, args *EntityActionArgs, run func(context.Conte
 		Short: short,
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			client, err := newClient(cmd.Context())
+			client, err := newGoogleClient(cmd.Context())
 			if err != nil {
 				return err
 			}

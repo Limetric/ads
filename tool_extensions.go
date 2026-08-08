@@ -55,7 +55,7 @@ var extensionsCmd = &cobra.Command{
 	Short: "List campaign-level extensions (sitelinks, callouts, snippets)",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		client, err := newClient(cmd.Context())
+		client, err := newGoogleClient(cmd.Context())
 		if err != nil {
 			return err
 		}

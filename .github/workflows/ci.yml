@@ -42,7 +42,7 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      - run: go build -ldflags="-X main.version=dev" -o build/goads .
+      - run: go build -ldflags="-X main.version=dev" -o build/ads .
 
   integration:
     # Live Google Ads API smoke tests (the //go:build integration suite). They
@@ -96,14 +96,14 @@ jobs:
               ext=".exe"
             fi
 
-            out="dist/goads-${goos}-${goarch}${ext}"
+            out="dist/ads-${goos}-${goarch}${ext}"
             GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags="-s -w -X main.version=${GITHUB_REF_NAME}" -o "$out" .
           done
 
       - name: Upload release binaries
         uses: softprops/action-gh-release@v3
         with:
-          files: dist/goads-*
+          files: dist/ads-*
 
       - name: Update Homebrew tap
         if: ${{ vars.HOMEBREW_TAP_REPOSITORY != '' }}
@@ -118,10 +118,10 @@ jobs:
             exit 1
           fi
 
-          darwin_amd64_sha="$(sha256sum dist/goads-darwin-amd64 | awk '{print $1}')"
-          darwin_arm64_sha="$(sha256sum dist/goads-darwin-arm64 | awk '{print $1}')"
-          linux_amd64_sha="$(sha256sum dist/goads-linux-amd64 | awk '{print $1}')"
-          linux_arm64_sha="$(sha256sum dist/goads-linux-arm64 | awk '{print $1}')"
+          darwin_amd64_sha="$(sha256sum dist/ads-darwin-amd64 | awk '{print $1}')"
+          darwin_arm64_sha="$(sha256sum dist/ads-darwin-arm64 | awk '{print $1}')"
+          linux_amd64_sha="$(sha256sum dist/ads-linux-amd64 | awk '{print $1}')"
+          linux_arm64_sha="$(sha256sum dist/ads-linux-arm64 | awk '{print $1}')"
 
           git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/${HOMEBREW_TAP_REPOSITORY}.git" homebrew-tap
           mkdir -p homebrew-tap/Formula
@@ -132,16 +132,16 @@ jobs:
             "${darwin_arm64_sha}" \
             "${linux_amd64_sha}" \
             "${linux_arm64_sha}" \
-            > homebrew-tap/Formula/goads.rb
+            > homebrew-tap/Formula/ads.rb
 
           git -C homebrew-tap config user.name "github-actions[bot]"
           git -C homebrew-tap config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          if ! bash scripts/homebrew-formula-has-changes.sh homebrew-tap Formula/goads.rb; then
+          if ! bash scripts/homebrew-formula-has-changes.sh homebrew-tap Formula/ads.rb; then
             echo "Homebrew formula already matches ${GITHUB_REF_NAME}."
             exit 0
           fi
 
-          git -C homebrew-tap add Formula/goads.rb
-          git -C homebrew-tap commit -m "Update goads to ${GITHUB_REF_NAME}"
+          git -C homebrew-tap add Formula/ads.rb
+          git -C homebrew-tap commit -m "Update ads to ${GITHUB_REF_NAME}"
           git -C homebrew-tap push

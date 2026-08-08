@@ -94,7 +94,7 @@ func applyConfirmed(ctx context.Context, c *Client, tool, confirm string) (Write
 
 // applyConsumed finishes a consumed pending write: it re-stages destructive
 // operations for their second confirmation, otherwise applies and audits.
-// Shared by the per-tool confirm path (applyConfirmed) and `goads confirm`.
+// Shared by the per-tool confirm path (applyConfirmed) and `ads confirm`.
 func applyConsumed(ctx context.Context, c *Client, p *PendingMutation) (WriteResult, error) {
 	// Destructive operations take two confirmations: the first consume
 	// re-stages under a fresh token instead of applying (issue #12).

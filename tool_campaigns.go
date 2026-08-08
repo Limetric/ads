@@ -113,7 +113,7 @@ var campaignsCmd = &cobra.Command{
 	Short: "Show campaign-level performance metrics",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		client, err := newClient(cmd.Context())
+		client, err := newGoogleClient(cmd.Context())
 		if err != nil {
 			return err
 		}

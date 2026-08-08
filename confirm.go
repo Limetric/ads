@@ -7,7 +7,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// `goads confirm <token>` applies a staged write by token alone, so the user
+// `ads confirm <token>` applies a staged write by token alone, so the user
 // doesn't have to re-type the original command with --confirm appended. The
 // pending file already stores everything needed (tool, customer, operations),
 // and applying exactly what was staged preserves the token/tool binding that
@@ -56,7 +56,7 @@ var confirmCmd = &cobra.Command{
 	Long:  "Apply a staged write exactly as previewed, identified by the confirm token from\nthe preview — no need to re-run the original command with --confirm.\n\nDestructive operations return a second token that must be confirmed once more.",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client, err := newClient(cmd.Context())
+		client, err := newGoogleClient(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -69,7 +69,7 @@ var confirmCmd = &cobra.Command{
 		}
 		// The hint goes to stderr so stdout stays valid JSON for jq pipelines.
 		if !res.Applied && res.Token != "" {
-			fmt.Fprintf(cmd.ErrOrStderr(), "Second confirmation required: goads confirm %s\n", res.Token)
+			fmt.Fprintf(cmd.ErrOrStderr(), "Second confirmation required: ads confirm %s\n", res.Token)
 		}
 		return nil
 	},

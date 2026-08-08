@@ -13,231 +13,59 @@ import (
 // subcommands, backed by the same handlers.
 var mcpCmd = &cobra.Command{
 	Use:   "mcp",
-	Short: "Run the Google Ads MCP server over stdio",
-	Long:  "Serve Google Ads tools to an MCP host (Claude Desktop, Cursor, …) over stdio.\n\nConfigure your host to run `goads mcp` and pass credentials via the environment.",
+	Short: "Run the ads MCP server over stdio",
+	Long:  "Serve every platform's tools to an MCP host (Claude Desktop, Cursor, …) over stdio.\n\nTool names carry their platform: `google_campaigns`, `google_search`, ….\n\nConfigure your host to run `ads mcp` and pass credentials via the environment.",
 	Args:  cobra.NoArgs,
 	RunE:  runMCP,
 }
 
 func runMCP(cmd *cobra.Command, _ []string) error {
 	ctx := cmd.Context()
-	client, err := newClient(ctx)
-	if err != nil {
+	server := mcp.NewServer(&mcp.Implementation{Name: "ads", Version: versionString()}, nil)
+	if err := registerTools(ctx, server); err != nil {
 		return err
 	}
-
-	server := mcp.NewServer(&mcp.Implementation{Name: "goads", Version: versionString()}, nil)
-	registerTools(server, client)
-
 	// Run blocks until stdin closes or the context is cancelled.
 	return server.Run(ctx, &mcp.StdioTransport{})
 }
 
-// registerTools wires every tool into the MCP server. Each tool's input
-// schema is derived by reflection from its Args struct, so the struct tags in
-// tool_*.go are the single source of truth for the schema.
+// registerTools wires every registered platform's tools into the MCP server,
+// each under its own `<platform>_` prefix.
 //
-// Keep this list in sync with the CLI subcommands registered in main.go's init.
-func registerTools(server *mcp.Server, client *Client) {
-	addTool(server, client, "search",
-		"Run a GAQL query against a Google Ads account and return the rows.",
-		runSearch)
-
-	addTool(server, client, "list_accounts",
-		"List the Google Ads accounts accessible to the authenticated user.",
-		runAccounts)
-
-	addTool(server, client, "account_info",
-		"Show account details: descriptive name, currency code (which all *_micros cost fields are denominated in), time zone, and account flags.",
-		runAccountInfo)
-
-	addTool(server, client, "set_campaign_budget",
-		"Update a campaign's daily budget. Returns a preview + confirm token; pass Confirm to apply.",
-		runBudgetSet)
-
-	addTool(server, client, "delete_campaign_budget",
-		"Delete an unused campaign budget. Returns a preview + confirm token; two confirmations are required to apply.",
-		runDeleteBudget)
-
-	addTool(server, client, "campaigns",
-		"Show campaign-level performance metrics (cost, clicks, conversions, CTR, CPA) for non-removed campaigns (defaults to the last 30 days).",
-		runCampaigns)
-
-	addTool(server, client, "ads",
-		"Show ad-level performance metrics for non-removed ads, ordered by cost (defaults to the last 30 days).",
-		runAds)
-
-	addTool(server, client, "keyword_performance",
-		"Show keyword-level performance metrics (impressions, clicks, CTR, CPC, cost, conversions, quality score; defaults to the last 30 days).",
-		runKeywordPerformance)
-
-	addTool(server, client, "search_terms",
-		"Show the actual search terms that triggered ads (defaults to the last 30 days).",
-		runSearchTerms)
-
-	addTool(server, client, "negative_keywords",
-		"List campaign-level negative keywords.",
-		runNegativeKeywords)
-
-	addTool(server, client, "report",
-		"Run an arbitrary GAQL query and return results as json (default), table, or csv.",
-		runReport)
-
-	addTool(server, client, "geo_targets",
-		"Search geo target constants by name to find location IDs for geo-targeting.",
-		runGeoTargets)
-
-	addTool(server, client, "geo_performance",
-		"Show geographic performance for campaigns (defaults to the last 30 days).",
-		runGeoPerformance)
-
-	addTool(server, client, "conversions",
-		"List all conversion actions configured in the account.",
-		runConversions)
-
-	addTool(server, client, "policy",
-		"List ads with policy issues (disapproved, limited, under review).",
-		runPolicy)
-
-	addTool(server, client, "extensions",
-		"List campaign-level extensions (sitelinks, callouts, structured snippets).",
-		runExtensions)
-
-	addTool(server, client, "keyword_ideas",
-		"Discover keyword ideas from seed keywords using the Keyword Planner.",
-		runDiscoverKeywords)
-
-	addTool(server, client, "keyword_forecasts",
-		"Get recent historical performance metrics for specific keywords.",
-		runKeywordForecasts)
-
-	addTool(server, client, "list_recommendations",
-		"List active (non-dismissed) recommendations for the account.",
-		runListRecommendations)
-
-	addTool(server, client, "apply_recommendation",
-		"Apply a recommendation. Returns a preview + confirm token; pass Confirm to apply.",
-		runApplyRecommendation)
-
-	addTool(server, client, "dismiss_recommendation",
-		"Dismiss a recommendation. Returns a preview + confirm token; pass Confirm to apply.",
-		runDismissRecommendation)
-
-	addTool(server, client, "upload_image_asset",
-		"Upload a base64-encoded image asset. Returns a preview + confirm token; pass Confirm to apply.",
-		runUploadImageAsset)
-
-	addTool(server, client, "upload_youtube_video_asset",
-		"Create an asset referencing an existing YouTube video. Returns a preview + confirm token; pass Confirm to apply.",
-		runUploadYouTubeVideoAsset)
-
-	addTool(server, client, "upload_youtube_video",
-		"Upload a local MP4 to a Google-managed unlisted YouTube channel. Returns a preview + confirm token; pass Confirm to apply.",
-		runUploadYouTubeVideo)
-
-	addTool(server, client, "upload_text_asset",
-		"Upload a reusable text asset. Returns a preview + confirm token; pass Confirm to apply.",
-		runUploadTextAsset)
-
-	addTool(server, client, "draft_app_ad",
-		"Draft an App campaign ad with text, image, and YouTube assets. Returns a preview + confirm token; pass Confirm to apply.",
-		runDraftAppAd)
-
-	addTool(server, client, "pause_entity",
-		"Pause a campaign, ad group, ad, or keyword. Returns a preview + confirm token; pass Confirm to apply.",
-		runPauseEntity)
-
-	addTool(server, client, "enable_entity",
-		"Enable a campaign, ad group, ad, or keyword. Returns a preview + confirm token; pass Confirm to apply.",
-		runEnableEntity)
-
-	addTool(server, client, "remove_entity",
-		"Remove a campaign, ad group, ad, or keyword (destructive). Returns a preview + confirm token; pass Confirm to apply.",
-		runRemoveEntity)
-
-	addTool(server, client, "set_campaign_schedule",
-		"Set campaign ad schedules (day-of-week time windows). Returns a preview + confirm token; pass Confirm to apply.",
-		runSetCampaignSchedule)
-
-	addTool(server, client, "create_portfolio_bidding_strategy",
-		"Create a portfolio bidding strategy (TARGET_CPA/ROAS/IMPRESSION_SHARE). Returns a preview + confirm token; pass Confirm to apply.",
-		runCreatePortfolioBidding)
-
-	addTool(server, client, "update_keyword_bid",
-		"Update a keyword's CPC bid (enforces the bid-increase guard). Returns a preview + confirm token; pass Confirm to apply.",
-		runUpdateKeywordBid)
-
-	addTool(server, client, "create_custom_audience",
-		"NOT SUPPORTED YET: custom audiences need the dedicated customAudiences:mutate service (v23). This tool always errors with guidance; create the audience in the Google Ads UI and attach it with add_audience_targeting.",
-		runCreateCustomAudience)
-
-	addTool(server, client, "add_audience_targeting",
-		"Attach audience targeting to a campaign (TARGETING/OBSERVATION). Returns a preview + confirm token; pass Confirm to apply.",
-		runAddAudienceTargeting)
-
-	addTool(server, client, "create_ad_group",
-		"Create an ad group in a campaign (defaults to PAUSED). Returns a preview + confirm token; pass Confirm to apply.",
-		runCreateAdGroup)
-
-	addTool(server, client, "update_ad_group",
-		"Update an ad group's name, CPC bid, and/or ad rotation mode. Returns a preview + confirm token; pass Confirm to apply.",
-		runUpdateAdGroup)
-
-	addTool(server, client, "draft_responsive_search_ad",
-		"Draft a Responsive Search Ad (3-15 headlines, 2-4 descriptions; defaults to PAUSED). Returns a preview + confirm token; pass Confirm to apply.",
-		runDraftResponsiveSearchAd)
-
-	addTool(server, client, "draft_keywords",
-		"Add keywords (with match types) to an ad group. Returns a preview + confirm token; pass Confirm to apply.",
-		runDraftKeywords)
-
-	addTool(server, client, "add_negative_keywords",
-		"Add campaign-level negative keywords. Returns a preview + confirm token; pass Confirm to apply.",
-		runAddNegativeKeywords)
-
-	addTool(server, client, "remove_keywords",
-		"Remove keywords from an ad group by criterion ID (destructive). Returns a preview + confirm token; pass Confirm to apply.",
-		runRemoveKeywords)
-
-	addTool(server, client, "remove_negative_keywords",
-		"Remove campaign-level negative keywords by criterion ID (destructive). Returns a preview + confirm token; pass Confirm to apply.",
-		runRemoveNegativeKeywords)
-
-	addTool(server, client, "draft_sitelinks",
-		"Draft sitelink extensions for a campaign. Returns a preview + confirm token; pass Confirm to apply.",
-		runDraftSitelinks)
-
-	addTool(server, client, "create_callouts",
-		"Draft callout extensions for a campaign. Returns a preview + confirm token; pass Confirm to apply.",
-		runCreateCallouts)
-
-	addTool(server, client, "create_structured_snippets",
-		"Draft structured snippet extensions for a campaign. Returns a preview + confirm token; pass Confirm to apply.",
-		runCreateStructuredSnippets)
-
-	addTool(server, client, "remove_extension",
-		"Remove a campaign extension (destructive). Returns a preview + confirm token; pass Confirm to apply.",
-		runRemoveExtension)
-
-	addTool(server, client, "create_pmax_campaign",
-		"Create a Performance Max campaign as one atomic batch (defaults to PAUSED). Returns a preview + confirm token; pass Confirm to apply.",
-		runCreatePmaxCampaign)
-
-	addTool(server, client, "create_app_campaign",
-		"Create a Google Play App campaign for installs as one atomic batch (defaults to PAUSED). Returns a preview + confirm token; pass Confirm to apply.",
-		runCreateAppCampaign)
-
-	addTool(server, client, "draft_campaign",
-		"Draft a new campaign with budget, ad group, and optional keywords (defaults to PAUSED). Returns a preview + confirm token; pass Confirm to apply.",
-		runDraftCampaign)
-
-	addTool(server, client, "update_campaign",
-		"Update a campaign's budget, bidding strategy, and/or geo/language targeting. Returns a preview + confirm token; pass Confirm to apply.",
-		runUpdateCampaign)
+// Keep each platform's tool list in sync with the CLI subcommands it exposes
+// through Platform.Commands.
+func registerTools(ctx context.Context, server *mcp.Server) error {
+	for _, p := range platforms() {
+		if p.RegisterMCP == nil {
+			continue
+		}
+		// A platform whose credentials don't resolve fails the whole server,
+		// as it did before the platform split. An MCP host has no way to
+		// surface a half-configured server, so a loud failure at startup beats
+		// silently serving a subset of the tools.
+		//
+		// Revisit when a second platform lands: a user configured for only one
+		// network would then be unable to start the server at all. The fix is a
+		// deliberate policy (skip-with-warning, or an explicit platform
+		// allow-list), not an accident of this loop.
+		if err := p.RegisterMCP(ctx, &toolRegistrar{server: server, prefix: p.Name + "_"}); err != nil {
+			return fmt.Errorf("register %s tools: %w", p.Title, err)
+		}
+	}
+	return nil
 }
 
-// addTool adapts a shared handler func(ctx, *Client, A) (R, error) into an MCP
-// tool, returning the result as both a JSON text block and structured content.
+// toolRegistrar is a platform's handle on the MCP server. It carries the
+// platform's namespace so tool names are prefixed on the way in rather than
+// spelled out at each of the ~50 registration sites.
+type toolRegistrar struct {
+	server *mcp.Server
+	prefix string
+}
+
+// addTool adapts a shared handler func(ctx, C, A) (R, error) into an MCP tool,
+// returning the result as both a JSON text block and structured content. name
+// is the platform-local name; the registrar's prefix is applied here.
 //
 // The input schema for A is derived by the SDK via reflection over its struct
 // tags (the `jsonschema` tag value becomes each field's description). The
@@ -245,8 +73,10 @@ func registerTools(server *mcp.Server, client *Client) {
 // SDK's output-schema generation and validation, which otherwise mis-infers
 // result fields typed `[]json.RawMessage` (a `[]byte` alias) as byte arrays and
 // rejects the real object rows at call time.
-func addTool[A any, R any](server *mcp.Server, client *Client, name, desc string, handler func(context.Context, *Client, A) (R, error)) {
-	mcp.AddTool(server, &mcp.Tool{Name: name, Description: desc},
+//
+// C is the platform's client type, so this adapter is shared by every platform.
+func addTool[C, A, R any](reg *toolRegistrar, client C, name, desc string, handler func(context.Context, C, A) (R, error)) {
+	mcp.AddTool(reg.server, &mcp.Tool{Name: reg.prefix + name, Description: desc},
 		func(ctx context.Context, _ *mcp.CallToolRequest, args A) (*mcp.CallToolResult, any, error) {
 			result, err := handler(ctx, client, args)
 			if err != nil {

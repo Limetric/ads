@@ -13,7 +13,7 @@ import (
 // base URL is non-production, NewClient skips OAuth and uses a static token.
 func newTestClient(t *testing.T, srv *httptest.Server) *Client {
 	t.Helper()
-	cfg := &Config{BaseURL: srv.URL, LoginCustomerID: "1234567890"}
+	cfg := &GoogleConfig{BaseURL: srv.URL, LoginCustomerID: "1234567890"}
 	if cfg.BaseURL == defaultBaseURL {
 		t.Fatal("test server URL collided with the production base URL")
 	}

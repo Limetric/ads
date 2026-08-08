@@ -20,9 +20,9 @@ import (
 // when credentials are not configured.
 func liveClient(t *testing.T) *Client {
 	t.Helper()
-	cfg, err := loadConfig("")
+	cfg, err := loadGoogleConfig("")
 	if err != nil {
-		t.Fatalf("loadConfig: %v", err)
+		t.Fatalf("loadGoogleConfig: %v", err)
 	}
 	if cfg.isTest() {
 		t.Skip("GOOGLE_ADS_API_BASE_URL points away from production; skipping live test")

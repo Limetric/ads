@@ -159,7 +159,7 @@ var keywordsPerfCmd = &cobra.Command{
 	Short: "Show keyword-level performance metrics",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		client, err := newClient(cmd.Context())
+		client, err := newGoogleClient(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -176,7 +176,7 @@ var searchTermsCmd = &cobra.Command{
 	Short: "Show the search terms that triggered ads",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		client, err := newClient(cmd.Context())
+		client, err := newGoogleClient(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -193,7 +193,7 @@ var negativeKeywordsCmd = &cobra.Command{
 	Short: "List campaign-level negative keywords",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		client, err := newClient(cmd.Context())
+		client, err := newGoogleClient(cmd.Context())
 		if err != nil {
 			return err
 		}

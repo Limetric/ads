@@ -149,7 +149,7 @@ func TestRunConfirm_BlockedOperation(t *testing.T) {
 
 func TestRunConfirm_ReenforcesBudgetCap(t *testing.T) {
 	// Tightening GOOGLE_ADS_MAX_DAILY_BUDGET between preview and confirm must
-	// block `goads confirm` just like re-running the original command would,
+	// block `ads confirm` just like re-running the original command would,
 	// and the rejected token must survive for when the cap is raised again.
 	useTempState(t)
 	srv, cap := mutateServer(t)
@@ -192,7 +192,7 @@ func TestCLI_ConfirmCommand(t *testing.T) {
 
 	out, err := runCLI(t, "confirm", p.Token)
 	if err != nil {
-		t.Fatalf("goads confirm: %v\noutput: %s", err, out)
+		t.Fatalf("ads confirm: %v\noutput: %s", err, out)
 	}
 	for _, want := range []string{`"applied": true`, `"tool": "set_campaign_budget"`} {
 		if !strings.Contains(out, want) {

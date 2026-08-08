@@ -63,7 +63,7 @@ var reportCmd = &cobra.Command{
 	Short: "Run a GAQL query and render results as json, table, or csv",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		client, err := newClient(cmd.Context())
+		client, err := newGoogleClient(cmd.Context())
 		if err != nil {
 			return err
 		}

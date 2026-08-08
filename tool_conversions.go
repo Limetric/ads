@@ -54,7 +54,7 @@ var conversionsCmd = &cobra.Command{
 	Short: "List conversion actions configured in an account",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		client, err := newClient(cmd.Context())
+		client, err := newGoogleClient(cmd.Context())
 		if err != nil {
 			return err
 		}

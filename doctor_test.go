@@ -36,13 +36,13 @@ func liveServer(t *testing.T, searchStatus int, searchBody string) *httptest.Ser
 
 const testTokenNotApproved = `{"error":{"code":403,"status":"PERMISSION_DENIED","message":"The caller does not have permission","details":[{"@type":"type.googleapis.com/google.ads.googleads.v23.errors.GoogleAdsFailure","errors":[{"errorCode":{"authorizationError":"DEVELOPER_TOKEN_NOT_APPROVED"},"message":"The developer token is only approved for use with test accounts. To access non-test accounts, apply for Basic or Standard access."}]}]}}`
 
-func TestRunDoctorLive_Healthy(t *testing.T) {
+func TestRunGoogleDoctorLive_Healthy(t *testing.T) {
 	srv := liveServer(t, http.StatusOK, `{"results":[{"customerClient":{"id":"5987166041"}}]}`)
 	defer srv.Close()
 
 	var out bytes.Buffer
-	cfg := &Config{BaseURL: srv.URL, LoginCustomerID: "5987166041"}
-	res, err := runDoctorLive(context.Background(), &out, cfg)
+	cfg := &GoogleConfig{BaseURL: srv.URL, LoginCustomerID: "5987166041"}
+	res, err := runGoogleDoctorLive(context.Background(), &out, cfg)
 	if err != nil || res != liveOK {
 		t.Fatalf("healthy setup: got (%v, %v), want (liveOK, nil)", res, err)
 	}
@@ -57,13 +57,13 @@ func TestRunDoctorLive_Healthy(t *testing.T) {
 
 // A test-level developer token passes listAccessibleCustomers but fails a real
 // query with a definitive 403 — the live check must report NOT READY (liveFailed).
-func TestRunDoctorLive_TestTokenIsDefinitiveFailure(t *testing.T) {
+func TestRunGoogleDoctorLive_TestTokenIsDefinitiveFailure(t *testing.T) {
 	srv := liveServer(t, http.StatusForbidden, testTokenNotApproved)
 	defer srv.Close()
 
 	var out bytes.Buffer
-	cfg := &Config{BaseURL: srv.URL, LoginCustomerID: "5987166041"}
-	res, err := runDoctorLive(context.Background(), &out, cfg)
+	cfg := &GoogleConfig{BaseURL: srv.URL, LoginCustomerID: "5987166041"}
+	res, err := runGoogleDoctorLive(context.Background(), &out, cfg)
 	if err == nil || res != liveFailed {
 		t.Fatalf("test-only token: got (%v, %v), want (liveFailed, err)", res, err)
 	}
@@ -77,13 +77,13 @@ func TestRunDoctorLive_TestTokenIsDefinitiveFailure(t *testing.T) {
 }
 
 // A 5xx from the API is the server's problem, not the user's setup: inconclusive.
-func TestRunDoctorLive_ServerErrorIsInconclusive(t *testing.T) {
+func TestRunGoogleDoctorLive_ServerErrorIsInconclusive(t *testing.T) {
 	srv := liveServer(t, http.StatusServiceUnavailable, `{"error":{"code":503,"status":"UNAVAILABLE","message":"backend unavailable"}}`)
 	defer srv.Close()
 
 	var out bytes.Buffer
-	cfg := &Config{BaseURL: srv.URL, LoginCustomerID: "5987166041"}
-	res, err := runDoctorLive(context.Background(), &out, cfg)
+	cfg := &GoogleConfig{BaseURL: srv.URL, LoginCustomerID: "5987166041"}
+	res, err := runGoogleDoctorLive(context.Background(), &out, cfg)
 	if err == nil || res != liveInconclusive {
 		t.Fatalf("5xx: got (%v, %v), want (liveInconclusive, err)", res, err)
 	}
@@ -94,14 +94,14 @@ func TestRunDoctorLive_ServerErrorIsInconclusive(t *testing.T) {
 
 // An unreachable API (no HTTP response at all) is inconclusive, not NOT READY —
 // the plane-mode case: credentials are fine, we just couldn't check them.
-func TestRunDoctorLive_UnreachableIsInconclusive(t *testing.T) {
+func TestRunGoogleDoctorLive_UnreachableIsInconclusive(t *testing.T) {
 	srv := liveServer(t, http.StatusOK, `{}`)
 	url := srv.URL
 	srv.Close() // free the port so the client gets connection-refused
 
 	var out bytes.Buffer
-	cfg := &Config{BaseURL: url, LoginCustomerID: "5987166041"}
-	res, err := runDoctorLive(context.Background(), &out, cfg)
+	cfg := &GoogleConfig{BaseURL: url, LoginCustomerID: "5987166041"}
+	res, err := runGoogleDoctorLive(context.Background(), &out, cfg)
 	if err == nil || res != liveInconclusive {
 		t.Fatalf("unreachable API: got (%v, %v), want (liveInconclusive, err)", res, err)
 	}
@@ -110,13 +110,13 @@ func TestRunDoctorLive_UnreachableIsInconclusive(t *testing.T) {
 	}
 }
 
-func TestRunDoctorLive_SkipsQueryWithoutLoginCustomerID(t *testing.T) {
+func TestRunGoogleDoctorLive_SkipsQueryWithoutLoginCustomerID(t *testing.T) {
 	srv := liveServer(t, http.StatusOK, `{"results":[]}`)
 	defer srv.Close()
 
 	var out bytes.Buffer
-	cfg := &Config{BaseURL: srv.URL} // no login_customer_id
-	res, err := runDoctorLive(context.Background(), &out, cfg)
+	cfg := &GoogleConfig{BaseURL: srv.URL} // no login_customer_id
+	res, err := runGoogleDoctorLive(context.Background(), &out, cfg)
 	if err != nil || res != liveOK {
 		t.Fatalf("no login_customer_id: got (%v, %v), want (liveOK, nil)", res, err)
 	}

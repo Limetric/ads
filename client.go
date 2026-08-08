@@ -30,14 +30,14 @@ const defaultBaseURL = "https://googleads.googleapis.com/" + apiVersion
 // Note: this is the REST/JSON API (HTTP POST), not gRPC — there is no generated
 // protobuf code. Request and response bodies are plain JSON.
 type Client struct {
-	cfg    *Config
+	cfg    *GoogleConfig
 	http   *http.Client
 	upload *http.Client
 	tokens oauth2.TokenSource
 }
 
 // NewClient builds a Client from config, validating credentials first.
-func NewClient(ctx context.Context, cfg *Config) (*Client, error) {
+func NewClient(ctx context.Context, cfg *GoogleConfig) (*Client, error) {
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
@@ -50,7 +50,7 @@ func NewClient(ctx context.Context, cfg *Config) (*Client, error) {
 		// server that never answers can't hang the CLI forever) and the
 		// transfer itself is bounded by the request context.
 		upload: &http.Client{Transport: &http.Transport{ResponseHeaderTimeout: 60 * time.Second}},
-		tokens: newTokenSource(ctx, cfg),
+		tokens: newTokenSource(ctx, cfg.oauth()),
 	}, nil
 }
 
@@ -73,7 +73,7 @@ func (c *Client) resolveCustomerID(explicit string) (string, error) {
 	if c != nil && c.cfg != nil && c.cfg.DefaultCustomerID != "" {
 		return c.cfg.DefaultCustomerID, nil
 	}
-	return "", fmt.Errorf("customer_id is required — pass --customer-id, or set a default with `goads config set-customer <id>` (or GOOGLE_ADS_CUSTOMER_ID)")
+	return "", fmt.Errorf("customer_id is required — pass --customer-id, or set a default with `ads config google set-customer <id>` (or GOOGLE_ADS_CUSTOMER_ID)")
 }
 
 // buildHeaders sets the three headers every Google Ads REST call needs:

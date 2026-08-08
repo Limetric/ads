@@ -50,7 +50,7 @@ func TestWizardGatherClient_FromPath(t *testing.T) {
 	// offerToOpen: confirm "Open this now?" → no, then a "Press Enter" line.
 	// Then wizardGatherClient prompts for the path. So lines = [press-enter, path].
 	p := &fakePrompter{confirms: []bool{false}, lines: []string{"", jsonPath}}
-	creds, err := wizardGatherClient(p, io.Discard, &Config{}, func(string) error { return nil })
+	creds, err := wizardGatherClient(p, io.Discard, &GoogleConfig{}, func(string) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestWizardGatherClient_RepromptsOnBadPath(t *testing.T) {
 	// first missing → reprompt, second good. lines = [press-enter, missing, good].
 	p := &fakePrompter{confirms: []bool{false}, lines: []string{"", dir + "/missing.json", good}}
 	var out strings.Builder
-	creds, err := wizardGatherClient(p, &out, &Config{}, func(string) error { return nil })
+	creds, err := wizardGatherClient(p, &out, &GoogleConfig{}, func(string) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestWizardGatherClient_RepromptsOnBadPath(t *testing.T) {
 }
 
 func TestWizardGatherClient_ReuseExisting(t *testing.T) {
-	cfg := &Config{ClientID: "existing", ClientSecret: "esec"}
+	cfg := &GoogleConfig{ClientID: "existing", ClientSecret: "esec"}
 	// confirm "Keep it?" → yes. No line reads.
 	p := &fakePrompter{confirms: []bool{true}}
 	creds, err := wizardGatherClient(p, io.Discard, cfg, func(string) error { return nil })
@@ -101,7 +101,7 @@ func TestWizardGatherDeveloperToken_FreshAndEmptyReprompt(t *testing.T) {
 	// open? no; first secret empty → reprompt; second secret valid.
 	p := &fakePrompter{confirms: []bool{false}, lines: []string{""}, secrets: []string{"", "devtok"}}
 	var out strings.Builder
-	tok, err := wizardGatherDeveloperToken(p, &out, &Config{}, func(string) error { return nil })
+	tok, err := wizardGatherDeveloperToken(p, &out, &GoogleConfig{}, func(string) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestWizardGatherDeveloperToken_FreshAndEmptyReprompt(t *testing.T) {
 
 func TestWizardGatherDeveloperToken_Reuse(t *testing.T) {
 	p := &fakePrompter{confirms: []bool{true}} // Keep it? → yes
-	tok, err := wizardGatherDeveloperToken(p, io.Discard, &Config{DeveloperToken: "old"}, func(string) error { return nil })
+	tok, err := wizardGatherDeveloperToken(p, io.Discard, &GoogleConfig{DeveloperToken: "old"}, func(string) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +127,7 @@ func TestWizardGatherDeveloperToken_Reuse(t *testing.T) {
 func TestWizardGatherLoginCustomerID(t *testing.T) {
 	// Provided value, dashes stripped.
 	p := &fakePrompter{lines: []string{"123-456-7890"}}
-	id, err := wizardGatherLoginCustomerID(p, io.Discard, &Config{})
+	id, err := wizardGatherLoginCustomerID(p, io.Discard, &GoogleConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +136,7 @@ func TestWizardGatherLoginCustomerID(t *testing.T) {
 	}
 	// Empty input keeps the existing default.
 	p2 := &fakePrompter{lines: []string{""}}
-	id2, err := wizardGatherLoginCustomerID(p2, io.Discard, &Config{LoginCustomerID: "999"})
+	id2, err := wizardGatherLoginCustomerID(p2, io.Discard, &GoogleConfig{LoginCustomerID: "999"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -306,7 +306,7 @@ func TestRunLoginWizard_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var written Config
+	var written GoogleConfig
 	if _, err := toml.DecodeFile(target, &written); err != nil {
 		t.Fatal(err)
 	}
@@ -411,7 +411,7 @@ func TestOfferToOpen_NoBrowserSkipsConfirm(t *testing.T) {
 func TestWizardGatherRefreshToken_AuthorizedUserShortcut(t *testing.T) {
 	creds := clientCreds{kind: "authorized_user", clientID: "id", clientSecret: "sec", refreshToken: "rt-existing"}
 	p := &fakePrompter{} // any prompt would panic — the shortcut must not prompt
-	rt, err := wizardGatherRefreshToken(t.Context(), p, io.Discard, creds, &Config{}, nil, 0)
+	rt, err := wizardGatherRefreshToken(t.Context(), p, io.Discard, creds, &GoogleConfig{}, nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -425,7 +425,7 @@ func TestWizardGatherRefreshToken_ReuseExistingSignIn(t *testing.T) {
 	for _, answer := range []string{"", "reuse", "R"} {
 		p := &fakePrompter{lines: []string{answer}}
 		var out strings.Builder
-		rt, err := wizardGatherRefreshToken(t.Context(), p, &out, clientCreds{kind: "config"}, &Config{RefreshToken: "rt-cfg"}, nil, 0)
+		rt, err := wizardGatherRefreshToken(t.Context(), p, &out, clientCreds{kind: "config"}, &GoogleConfig{RefreshToken: "rt-cfg"}, nil, 0)
 		if err != nil {
 			t.Fatalf("answer %q: %v", answer, err)
 		}
@@ -448,7 +448,7 @@ func TestWizardGatherRefreshToken_PortBusy(t *testing.T) {
 
 	p := &fakePrompter{lines: []string{"new"}} // decline reuse → fresh sign-in
 	creds := clientCreds{kind: "config", clientID: "id", clientSecret: "sec"}
-	_, err = wizardGatherRefreshToken(t.Context(), p, io.Discard, creds, &Config{RefreshToken: "rt-cfg"}, nil, port)
+	_, err = wizardGatherRefreshToken(t.Context(), p, io.Discard, creds, &GoogleConfig{RefreshToken: "rt-cfg"}, nil, port)
 	if err == nil {
 		t.Fatal("expected an error when the loopback port is busy")
 	}

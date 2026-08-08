@@ -249,7 +249,7 @@ var campaignCreateCmd = &cobra.Command{
 		for _, s := range draftCampaignKwFlags {
 			draftCampaignArgs.Keywords = append(draftCampaignArgs.Keywords, parseKeywordFlag(s))
 		}
-		client, err := newClient(cmd.Context())
+		client, err := newGoogleClient(cmd.Context())
 		if err != nil {
 			return err
 		}

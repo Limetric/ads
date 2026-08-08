@@ -61,7 +61,7 @@ func TestRunAccounts_FallsBackWithoutLoginCustomerID(t *testing.T) {
 		t.Errorf("unexpected path %q", r.URL.Path)
 	}))
 	defer srv.Close()
-	cfg := &Config{BaseURL: srv.URL} // no LoginCustomerID
+	cfg := &GoogleConfig{BaseURL: srv.URL} // no LoginCustomerID
 	c, err := NewClient(context.Background(), cfg)
 	if err != nil {
 		t.Fatal(err)

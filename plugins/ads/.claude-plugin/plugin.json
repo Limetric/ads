@@ -1,0 +1,15 @@
+{
+  "name": "ads",
+  "version": "0.1.0",
+  "description": "Teaches Claude Code to drive the ads CLI for Google Ads \u2014 GAQL reads and preview-then-confirm writes.",
+  "author": {
+    "name": "Limetric"
+  },
+  "repository": "https://github.com/Limetric/goads",
+  "keywords": [
+    "google-ads",
+    "gaql",
+    "advertising",
+    "cli"
+  ]
+}

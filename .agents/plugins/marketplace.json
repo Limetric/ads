@@ -1,14 +1,14 @@
 {
-  "name": "goads",
+  "name": "ads",
   "interface": {
-    "displayName": "goads"
+    "displayName": "ads"
   },
   "plugins": [
     {
-      "name": "goads",
+      "name": "ads",
       "source": {
         "source": "local",
-        "path": "./plugins/goads"
+        "path": "./plugins/ads"
       },
       "policy": {
         "installation": "AVAILABLE",

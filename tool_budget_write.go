@@ -127,7 +127,7 @@ var budgetSetCmd = &cobra.Command{
 	Short: "Set a campaign budget's daily amount (previews first; --confirm to apply)",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		client, err := newClient(cmd.Context())
+		client, err := newGoogleClient(cmd.Context())
 		if err != nil {
 			return err
 		}

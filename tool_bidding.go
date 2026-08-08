@@ -182,7 +182,7 @@ var biddingPortfolioCmd = &cobra.Command{
 	Short: "Create a portfolio bidding strategy (previews first; --confirm to apply)",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		client, err := newClient(cmd.Context())
+		client, err := newGoogleClient(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -199,7 +199,7 @@ var biddingKeywordBidCmd = &cobra.Command{
 	Short: "Update a keyword's CPC bid (previews first; --confirm to apply)",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		client, err := newClient(cmd.Context())
+		client, err := newGoogleClient(cmd.Context())
 		if err != nil {
 			return err
 		}

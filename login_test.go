@@ -37,7 +37,7 @@ func TestCLI_LoginAuthorizedUser(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out, err := runCLI(t, "login", "--credentials", credPath)
+	out, err := runCLI(t, "login", "google", "--credentials", credPath)
 	if err != nil {
 		t.Fatalf("login failed: %v\n%s", err, out)
 	}
@@ -45,7 +45,7 @@ func TestCLI_LoginAuthorizedUser(t *testing.T) {
 		t.Errorf("unexpected output:\n%s", out)
 	}
 
-	var cfg Config
+	var cfg GoogleConfig
 	if _, err := toml.DecodeFile(target, &cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -69,11 +69,11 @@ func TestCLI_LoginAuthorizedUser_FreshConfigPath(t *testing.T) {
 	}
 	cfgPath := dir + "/fresh/config.toml" // neither the file nor its dir exists yet
 
-	out, err := runCLI(t, "login", "--credentials", credPath, "--config", cfgPath)
+	out, err := runCLI(t, "login", "google", "--credentials", credPath, "--config", cfgPath)
 	if err != nil {
 		t.Fatalf("login failed: %v\n%s", err, out)
 	}
-	var cfg Config
+	var cfg GoogleConfig
 	if _, err := toml.DecodeFile(cfgPath, &cfg); err != nil {
 		t.Fatalf("config not created at explicit --config path: %v", err)
 	}
@@ -143,7 +143,7 @@ func TestResolveLoginCreds_PrefersFile(t *testing.T) {
 	if err := writeFileHelper(p, `{"installed":{"client_id":"fileid","client_secret":"filesec"}}`); err != nil {
 		t.Fatal(err)
 	}
-	cfg := &Config{ClientID: "envid", ClientSecret: "envsec"}
+	cfg := &GoogleConfig{ClientID: "envid", ClientSecret: "envsec"}
 	got, err := resolveLoginCreds(cfg, p)
 	if err != nil {
 		t.Fatal(err)
@@ -154,7 +154,7 @@ func TestResolveLoginCreds_PrefersFile(t *testing.T) {
 }
 
 func TestResolveLoginCreds_FallsBackToConfig(t *testing.T) {
-	cfg := &Config{ClientID: "envid", ClientSecret: "envsec"}
+	cfg := &GoogleConfig{ClientID: "envid", ClientSecret: "envsec"}
 	got, err := resolveLoginCreds(cfg, "")
 	if err != nil {
 		t.Fatal(err)
@@ -165,7 +165,7 @@ func TestResolveLoginCreds_FallsBackToConfig(t *testing.T) {
 }
 
 func TestResolveLoginCreds_NoneFound(t *testing.T) {
-	_, err := resolveLoginCreds(&Config{}, "")
+	_, err := resolveLoginCreds(&GoogleConfig{}, "")
 	if err == nil || !strings.Contains(err.Error(), "--credentials") {
 		t.Fatalf("expected actionable error, got %v", err)
 	}
@@ -186,7 +186,7 @@ func TestWriteOAuthToConfig_PreservesExisting(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var cfg Config
+	var cfg GoogleConfig
 	if _, err := toml.DecodeFile(path, &cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -211,7 +211,7 @@ func TestWriteOAuthToConfig_FreshFile(t *testing.T) {
 	if err := writeOAuthToConfig(path, clientCreds{clientID: "cid", clientSecret: "csec"}, "rtok"); err != nil {
 		t.Fatal(err)
 	}
-	var cfg Config
+	var cfg GoogleConfig
 	if _, err := toml.DecodeFile(path, &cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -322,7 +322,7 @@ func TestMergeConfigValues_WritesAndPreserves(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var cfg Config
+	var cfg GoogleConfig
 	if _, err := toml.DecodeFile(path, &cfg); err != nil {
 		t.Fatal(err)
 	}

@@ -130,7 +130,7 @@ var keywordIdeasCmd = &cobra.Command{
 	Short: "Discover keyword ideas from seed keywords (Keyword Planner)",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		client, err := newClient(cmd.Context())
+		client, err := newGoogleClient(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -147,7 +147,7 @@ var keywordForecastsCmd = &cobra.Command{
 	Short: "Get recent historical metrics for specific keywords",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		client, err := newClient(cmd.Context())
+		client, err := newGoogleClient(cmd.Context())
 		if err != nil {
 			return err
 		}
