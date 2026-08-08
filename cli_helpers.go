@@ -10,11 +10,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newClient builds an API client from the resolved configuration (the global
-// --config flag plus the environment). Shared by every CLI subcommand and by
-// the MCP server.
-func newClient(ctx context.Context) (*Client, error) {
-	cfg, err := loadConfig(configPath)
+// newGoogleClient builds a Google Ads API client from the resolved
+// configuration (the global --config flag plus the environment). Shared by
+// every `ads google` subcommand and by the MCP server's google_* tools.
+func newGoogleClient(ctx context.Context) (*Client, error) {
+	cfg, err := loadGoogleConfig(configPath)
 	if err != nil {
 		return nil, err
 	}

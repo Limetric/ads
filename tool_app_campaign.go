@@ -197,7 +197,7 @@ var campaignCreateAppCmd = &cobra.Command{
 	Short: "Create an Android App campaign for installs (previews first; --confirm to apply)",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		client, err := newClient(cmd.Context())
+		client, err := newGoogleClient(cmd.Context())
 		if err != nil {
 			return err
 		}

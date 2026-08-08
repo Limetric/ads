@@ -8,7 +8,7 @@ import (
 
 // version is overridden at build time:
 //
-//	go build -ldflags "-X main.version=v0.1.0" -o build/goads .
+//	go build -ldflags "-X main.version=v0.1.0" -o build/ads .
 //
 // When unset, it falls back to the module version embedded by the Go toolchain.
 var version = "dev"
@@ -24,7 +24,7 @@ func versionString() string {
 }
 
 func versionVerboseString() string {
-	s := fmt.Sprintf("goads %s\n  go: %s\n  platform: %s/%s", versionString(), runtime.Version(), runtime.GOOS, runtime.GOARCH)
+	s := fmt.Sprintf("ads %s\n  go: %s\n  platform: %s/%s", versionString(), runtime.Version(), runtime.GOOS, runtime.GOARCH)
 	if info, ok := debug.ReadBuildInfo(); ok {
 		for _, kv := range info.Settings {
 			switch kv.Key {

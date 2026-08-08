@@ -30,7 +30,7 @@ func TestPrintJSON(t *testing.T) {
 
 func TestVersionVerboseString(t *testing.T) {
 	s := versionVerboseString()
-	for _, want := range []string{"goads", "go:", "platform:"} {
+	for _, want := range []string{"ads", "go:", "platform:"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("version string missing %q:\n%s", want, s)
 		}

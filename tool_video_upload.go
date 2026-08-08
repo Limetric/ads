@@ -68,7 +68,7 @@ var assetUploadVideoCmd = &cobra.Command{
 	Short: "Upload an MP4 to a Google-managed YouTube channel (previews first; --confirm to apply)",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		client, err := newClient(cmd.Context())
+		client, err := newGoogleClient(cmd.Context())
 		if err != nil {
 			return err
 		}

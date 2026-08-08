@@ -342,7 +342,7 @@ var campaignUpdateCmd = &cobra.Command{
 	Short: "Update a campaign's budget, bidding, or targeting (previews first; --confirm to apply)",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		client, err := newClient(cmd.Context())
+		client, err := newGoogleClient(cmd.Context())
 		if err != nil {
 			return err
 		}

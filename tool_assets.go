@@ -155,7 +155,7 @@ var assetImageCmd = &cobra.Command{
 			}
 			assetImageArgs.ImageDataBase64 = base64.StdEncoding.EncodeToString(data)
 		}
-		client, err := newClient(cmd.Context())
+		client, err := newGoogleClient(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -172,7 +172,7 @@ var assetTextCmd = &cobra.Command{
 	Short: "Upload a reusable text asset (previews first; --confirm to apply)",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		client, err := newClient(cmd.Context())
+		client, err := newGoogleClient(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -189,7 +189,7 @@ var assetYouTubeVideoCmd = &cobra.Command{
 	Short: "Create a YouTube video asset (previews first; --confirm to apply)",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		client, err := newClient(cmd.Context())
+		client, err := newGoogleClient(cmd.Context())
 		if err != nil {
 			return err
 		}

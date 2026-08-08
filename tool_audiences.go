@@ -47,7 +47,7 @@ func runCreateCustomAudience(ctx context.Context, c *Client, args CreateAudience
 	// customAudiences:mutate service (not googleAds:mutate), so a staged
 	// operation could never pass the mutate allow-list at confirm time.
 	// Failing here is honest; handing out a dead token is not (issue #9).
-	return WriteResult{}, fmt.Errorf("create_custom_audience is not supported yet: custom audiences use the dedicated customAudiences:mutate service in v23, which goads does not call. Create the audience in the Google Ads UI, then attach it with add_audience_targeting")
+	return WriteResult{}, fmt.Errorf("create_custom_audience is not supported yet: custom audiences use the dedicated customAudiences:mutate service in v23, which this client does not call. Create the audience in the Google Ads UI, then attach it with `ads google audience target` (MCP: google_add_audience_targeting)")
 }
 
 // AddAudienceTargetingArgs attaches an audience to a campaign in TARGETING or
@@ -110,7 +110,7 @@ var audienceCreateCmd = &cobra.Command{
 	Short: "Create a custom audience (previews first; --confirm to apply)",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		client, err := newClient(cmd.Context())
+		client, err := newGoogleClient(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -127,7 +127,7 @@ var audienceTargetCmd = &cobra.Command{
 	Short: "Attach audience targeting to a campaign (previews first; --confirm to apply)",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		client, err := newClient(cmd.Context())
+		client, err := newGoogleClient(cmd.Context())
 		if err != nil {
 			return err
 		}

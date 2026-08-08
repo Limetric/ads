@@ -19,7 +19,7 @@ import (
 //
 // The token store is file-backed (under stateDir) so it survives across the
 // stateless CLI invocations a skill makes, and works the same inside a
-// long-lived `goads mcp` session.
+// long-lived `ads mcp` session.
 
 // confirmTTL bounds how long a pending confirmation is valid.
 const confirmTTL = 10 * time.Minute
@@ -301,7 +301,7 @@ func (p *PendingMutation) previewText() string {
 	fmt.Fprintf(&b, "PREVIEW — %s on customer %s\n", p.Tool, p.CustomerID)
 	fmt.Fprintf(&b, "%s\n", p.Summary)
 	fmt.Fprintf(&b, "%d operation(s) staged. Nothing has been changed yet.\n", len(p.Operations))
-	fmt.Fprintf(&b, "\nTo apply, re-run with --confirm %s (or run: goads confirm %s)\n", p.Token, p.Token)
+	fmt.Fprintf(&b, "\nTo apply, re-run with --confirm %s (or run: ads confirm %s)\n", p.Token, p.Token)
 	return b.String()
 }
 

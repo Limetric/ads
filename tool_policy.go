@@ -53,7 +53,7 @@ var policyCmd = &cobra.Command{
 	Short: "List ads with policy issues (disapproved, limited, under review)",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		client, err := newClient(cmd.Context())
+		client, err := newGoogleClient(cmd.Context())
 		if err != nil {
 			return err
 		}

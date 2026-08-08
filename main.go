@@ -1,8 +1,10 @@
-// Command goads is a Google Ads MCP server and CLI.
+// Command ads is a multi-platform ad management MCP server and CLI.
 //
-// It exposes the same set of Google Ads tools two ways: as a conventional CLI
-// (`goads search …`) and as an MCP server over stdio (`goads mcp`). Both share
-// one handler per tool; see tool_*.go.
+// It exposes each ad platform's tools two ways: as a conventional CLI
+// (`ads google search …`) and as an MCP server over stdio (`ads mcp`), where the
+// same tools appear namespaced (`google_search`). Both front-ends share one
+// handler per tool; see tool_*.go. Google Ads is the platform implemented today
+// — see platform.go for what a second one has to supply.
 package main
 
 import (
@@ -29,9 +31,9 @@ func (e *exitErr) Unwrap() error { return e.err }
 var configPath string
 
 var rootCmd = &cobra.Command{
-	Use:           "goads",
-	Short:         "Google Ads campaign management — CLI and MCP server",
-	Long:          "goads exposes Google Ads tools as both a CLI and an MCP server (`goads mcp`).\n\nCredentials are read from the environment (GOOGLE_ADS_*) or a TOML config file.\nRun `goads doctor` to check your setup.",
+	Use:           "ads",
+	Short:         "Ad platform management — CLI and MCP server",
+	Long:          "ads exposes ad platform tools as both a CLI and an MCP server (`ads mcp`).\n\nEvery platform has its own namespace: `ads google campaigns` on the CLI,\n`google_campaigns` over MCP.\n\nCredentials are read from the environment or a TOML config file.\nRun `ads doctor` to check your setup.",
 	SilenceUsage:  true,
 	SilenceErrors: true,
 }
@@ -40,7 +42,7 @@ var versionVerbose bool
 
 var versionCmd = &cobra.Command{
 	Use:   "version",
-	Short: "Print goads version",
+	Short: "Print ads version",
 	Args:  cobra.NoArgs,
 	Run: func(cmd *cobra.Command, _ []string) {
 		out := cmd.OutOrStdout()
@@ -60,6 +62,9 @@ func init() {
 	versionCmd.Flags().BoolVarP(&versionVerbose, "verbose", "v", false, "print detailed build metadata")
 	doctorCmd.Flags().BoolVar(&doctorOffline, "offline", false, "skip the live API check; only verify that credentials resolve")
 
+	// Shared infrastructure. These are not namespaced — one config file, one
+	// confirm store, one audit log, one MCP server across every platform — but
+	// each grows a platform dimension below.
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(mcpCmd)
 	rootCmd.AddCommand(doctorCmd)
@@ -68,34 +73,19 @@ func init() {
 	rootCmd.AddCommand(confirmCmd)
 	rootCmd.AddCommand(auditCmd)
 
-	// Tool subcommands. Each tool_*.go registers its CLI command here and its
-	// MCP tool in registerTools (mcp.go) — keep the two in sync.
-	rootCmd.AddCommand(searchCmd)
-	rootCmd.AddCommand(accountsCmd)
-	rootCmd.AddCommand(budgetCmd)
-	rootCmd.AddCommand(campaignsCmd)
-	rootCmd.AddCommand(adsCmd)
-	rootCmd.AddCommand(keywordsCmd)
-	rootCmd.AddCommand(reportCmd)
-	rootCmd.AddCommand(geoCmd)
-	rootCmd.AddCommand(conversionsCmd)
-	rootCmd.AddCommand(policyCmd)
-	rootCmd.AddCommand(extensionsCmd)
-	rootCmd.AddCommand(keywordIdeasCmd)
-	rootCmd.AddCommand(keywordForecastsCmd)
-	rootCmd.AddCommand(recommendationsCmd)
-	rootCmd.AddCommand(assetCmd)
-	rootCmd.AddCommand(pauseCmd)
-	rootCmd.AddCommand(enableCmd)
-	rootCmd.AddCommand(removeCmd)
-	rootCmd.AddCommand(scheduleCmd)
-	rootCmd.AddCommand(biddingCmd)
-	rootCmd.AddCommand(audienceCmd)
-	rootCmd.AddCommand(adGroupCmd)
-	rootCmd.AddCommand(adCmd)
-	rootCmd.AddCommand(extensionCmd)
-	rootCmd.AddCommand(pmaxCmd)
-	rootCmd.AddCommand(campaignCmd)
+	// Platform namespaces. Everything platform-specific arrives through the
+	// registry, so adding a network means adding a platform_*.go — not editing
+	// this wiring. Package-level variable initialization (where platforms
+	// register) is complete before any init() runs, so the registry is full.
+	for _, p := range platforms() {
+		rootCmd.AddCommand(p.command())
+		if p.Login != nil {
+			loginCmd.AddCommand(p.Login)
+		}
+		if cmd := p.configCommand(); cmd != nil {
+			configCmd.AddCommand(cmd)
+		}
+	}
 }
 
 func main() {

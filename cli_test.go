@@ -100,7 +100,7 @@ func TestCLI_ConfigSetCustomer(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		out, err := runCLI(t, "config", "set-customer", "123-456-7890")
+		out, err := runCLI(t, "config", "google", "set-customer", "123-456-7890")
 		if err != nil {
 			t.Fatalf("set-customer: %v\noutput: %s", err, out)
 		}
@@ -108,9 +108,9 @@ func TestCLI_ConfigSetCustomer(t *testing.T) {
 			t.Errorf("unexpected set-customer output: %q", out)
 		}
 
-		cfg, err := loadConfig("")
+		cfg, err := loadGoogleConfig("")
 		if err != nil {
-			t.Fatalf("loadConfig: %v", err)
+			t.Fatalf("loadGoogleConfig: %v", err)
 		}
 		if cfg.DefaultCustomerID != "1234567890" {
 			t.Errorf("DefaultCustomerID = %q, want 1234567890", cfg.DefaultCustomerID)
@@ -123,12 +123,12 @@ func TestCLI_ConfigSetCustomer(t *testing.T) {
 	t.Run("creates the config file when missing", func(t *testing.T) {
 		useTempState(t)
 		clearAdsEnv(t)
-		if out, err := runCLI(t, "config", "set-customer", "1234567890"); err != nil {
+		if out, err := runCLI(t, "config", "google", "set-customer", "1234567890"); err != nil {
 			t.Fatalf("set-customer: %v\noutput: %s", err, out)
 		}
-		cfg, err := loadConfig("")
+		cfg, err := loadGoogleConfig("")
 		if err != nil {
-			t.Fatalf("loadConfig: %v", err)
+			t.Fatalf("loadGoogleConfig: %v", err)
 		}
 		if cfg.DefaultCustomerID != "1234567890" {
 			t.Errorf("DefaultCustomerID = %q, want 1234567890", cfg.DefaultCustomerID)
@@ -140,12 +140,12 @@ func TestCLI_ConfigSetCustomer(t *testing.T) {
 		clearAdsEnv(t)
 		// Nested path: missing parent directories must be created.
 		path := filepath.Join(t.TempDir(), "nested", "dir", "custom.toml")
-		if out, err := runCLI(t, "config", "set-customer", "1234567890", "--config", path); err != nil {
+		if out, err := runCLI(t, "config", "google", "set-customer", "1234567890", "--config", path); err != nil {
 			t.Fatalf("set-customer --config: %v\noutput: %s", err, out)
 		}
-		cfg, err := loadConfig(path)
+		cfg, err := loadGoogleConfig(path)
 		if err != nil {
-			t.Fatalf("loadConfig: %v", err)
+			t.Fatalf("loadGoogleConfig: %v", err)
 		}
 		if cfg.DefaultCustomerID != "1234567890" {
 			t.Errorf("DefaultCustomerID = %q, want 1234567890", cfg.DefaultCustomerID)
@@ -155,7 +155,7 @@ func TestCLI_ConfigSetCustomer(t *testing.T) {
 	t.Run("rejects malformed IDs", func(t *testing.T) {
 		useTempState(t)
 		for _, bad := range []string{"12345", "abcdefghij", "12345678901"} {
-			if out, err := runCLI(t, "config", "set-customer", bad); err == nil {
+			if out, err := runCLI(t, "config", "google", "set-customer", bad); err == nil {
 				t.Errorf("set-customer %q should fail; output: %s", bad, out)
 			}
 		}
@@ -197,7 +197,7 @@ func TestCLI_AccountsCommand(t *testing.T) {
 	t.Setenv("GOOGLE_ADS_API_BASE_URL", srv.URL) // non-prod → skips OAuth/creds
 	t.Setenv("GOOGLE_ADS_LOGIN_CUSTOMER_ID", "1234567890")
 
-	out, err := runCLI(t, "accounts")
+	out, err := runCLI(t, "google", "accounts")
 	if err != nil {
 		t.Fatalf("execute accounts: %v\noutput: %s", err, out)
 	}
@@ -220,18 +220,18 @@ func TestCLI_DefaultCustomerID(t *testing.T) {
 	t.Setenv("GOOGLE_ADS_API_BASE_URL", srv.URL)
 
 	t.Run("missing customer id is actionable", func(t *testing.T) {
-		out, err := runCLI(t, "campaigns")
+		out, err := runCLI(t, "google", "campaigns")
 		if err == nil {
 			t.Fatalf("campaigns without a customer ID should fail; output: %s", out)
 		}
-		if !strings.Contains(err.Error(), "config set-customer") {
-			t.Errorf("error should point at config set-customer: %v", err)
+		if !strings.Contains(err.Error(), "config google set-customer") {
+			t.Errorf("error should point at `config google set-customer`: %v", err)
 		}
 	})
 
 	t.Run("GOOGLE_ADS_CUSTOMER_ID fills in", func(t *testing.T) {
 		t.Setenv("GOOGLE_ADS_CUSTOMER_ID", "123-456-7890")
-		out, err := runCLI(t, "campaigns")
+		out, err := runCLI(t, "google", "campaigns")
 		if err != nil {
 			t.Fatalf("execute campaigns: %v\noutput: %s", err, out)
 		}
@@ -255,7 +255,7 @@ func TestCLI_ReadCommandFormats(t *testing.T) {
 	// Subtest order matters: flag variables persist across Execute calls on the
 	// shared rootCmd, so the default-format case must run before any --format.
 	t.Run("json is the default", func(t *testing.T) {
-		out, err := runCLI(t, "campaigns", "--customer-id", "1234567890")
+		out, err := runCLI(t, "google", "campaigns", "--customer-id", "1234567890")
 		if err != nil {
 			t.Fatalf("campaigns: %v\noutput: %s", err, out)
 		}
@@ -265,7 +265,7 @@ func TestCLI_ReadCommandFormats(t *testing.T) {
 	})
 
 	t.Run("table", func(t *testing.T) {
-		out, err := runCLI(t, "campaigns", "--customer-id", "1234567890", "--format", "table")
+		out, err := runCLI(t, "google", "campaigns", "--customer-id", "1234567890", "--format", "table")
 		if err != nil {
 			t.Fatalf("campaigns --format table: %v\noutput: %s", err, out)
 		}
@@ -281,7 +281,7 @@ func TestCLI_ReadCommandFormats(t *testing.T) {
 	})
 
 	t.Run("csv", func(t *testing.T) {
-		out, err := runCLI(t, "campaigns", "--customer-id", "1234567890", "--format", "csv")
+		out, err := runCLI(t, "google", "campaigns", "--customer-id", "1234567890", "--format", "csv")
 		if err != nil {
 			t.Fatalf("campaigns --format csv: %v\noutput: %s", err, out)
 		}
@@ -291,13 +291,13 @@ func TestCLI_ReadCommandFormats(t *testing.T) {
 	})
 
 	t.Run("unknown format errors", func(t *testing.T) {
-		if out, err := runCLI(t, "campaigns", "--customer-id", "1234567890", "--format", "yaml"); err == nil {
+		if out, err := runCLI(t, "google", "campaigns", "--customer-id", "1234567890", "--format", "yaml"); err == nil {
 			t.Fatalf("unknown format should fail; output: %s", out)
 		}
 	})
 
 	t.Run("search table uses the query's fields", func(t *testing.T) {
-		out, err := runCLI(t, "search", "--customer-id", "1234567890",
+		out, err := runCLI(t, "google", "search", "--customer-id", "1234567890",
 			"--query", "SELECT campaign.id, campaign.name FROM campaign", "--format", "table")
 		if err != nil {
 			t.Fatalf("search --format table: %v\noutput: %s", err, out)

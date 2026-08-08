@@ -10,13 +10,8 @@ import (
 	"strings"
 
 	"golang.org/x/oauth2"
-	"golang.org/x/oauth2/google"
 	"golang.org/x/term"
 )
-
-// googleOAuthEndpoint is the production OAuth endpoint. It is a package var so
-// tests can point the token exchange at an httptest server.
-var googleOAuthEndpoint = google.Endpoint
 
 // prompter is the wizard's input surface. The real implementation reads a TTY;
 // tests inject a fake with scripted answers.
@@ -173,7 +168,7 @@ func offerToOpen(p prompter, out io.Writer, instruction, url string, openFn func
 // loopback server waits for the callback either way.
 func confirmBrowserOpen(p prompter, out io.Writer, port int, openFn func(string) error) func(string) error {
 	return func(u string) error {
-		fmt.Fprintf(out, "   Sign in to Google to authorize goads.\n   → %s\n", u)
+		fmt.Fprintf(out, "   Sign in to Google to authorize ads.\n   → %s\n", u)
 		if !loginNoBrowser {
 			open, err := p.confirm("   Open this now?", true)
 			if err != nil {
@@ -193,7 +188,7 @@ func confirmBrowserOpen(p prompter, out io.Writer, port int, openFn func(string)
 // wizardGatherClient resolves the OAuth client: reuse an existing one from cfg,
 // or guide the user to download a Desktop-app JSON and read it (re-prompting on
 // a bad path).
-func wizardGatherClient(p prompter, out io.Writer, cfg *Config, openFn func(string) error) (clientCreds, error) {
+func wizardGatherClient(p prompter, out io.Writer, cfg *GoogleConfig, openFn func(string) error) (clientCreds, error) {
 	if cfg.ClientID != "" && cfg.ClientSecret != "" {
 		keep, err := p.confirm(fmt.Sprintf("   Found an OAuth client (%s). Keep it?", secretHint(cfg.ClientID)), true)
 		if err != nil {
@@ -236,7 +231,7 @@ func wizardGatherClient(p prompter, out io.Writer, cfg *Config, openFn func(stri
 
 // wizardGatherDeveloperToken reuses an existing developer token or prompts for a
 // new one (masked), re-prompting until non-empty.
-func wizardGatherDeveloperToken(p prompter, out io.Writer, cfg *Config, openFn func(string) error) (string, error) {
+func wizardGatherDeveloperToken(p prompter, out io.Writer, cfg *GoogleConfig, openFn func(string) error) (string, error) {
 	if cfg.DeveloperToken != "" {
 		keep, err := p.confirm(fmt.Sprintf("   Found a developer token (%s). Keep it?", secretHint(cfg.DeveloperToken)), true)
 		if err != nil {
@@ -263,7 +258,7 @@ func wizardGatherDeveloperToken(p prompter, out io.Writer, cfg *Config, openFn f
 
 // wizardGatherLoginCustomerID prompts for an optional manager (MCC) account ID,
 // defaulting to the existing value and stripping dashes.
-func wizardGatherLoginCustomerID(p prompter, out io.Writer, cfg *Config) (string, error) {
+func wizardGatherLoginCustomerID(p prompter, out io.Writer, cfg *GoogleConfig) (string, error) {
 	prompt := "   Login customer ID [skip]: "
 	if cfg.LoginCustomerID != "" {
 		prompt = fmt.Sprintf("   Login customer ID [%s]: ", cfg.LoginCustomerID)
@@ -280,7 +275,7 @@ func wizardGatherLoginCustomerID(p prompter, out io.Writer, cfg *Config) (string
 
 // wizardGatherRefreshToken reuses an existing sign-in or runs the loopback OAuth
 // flow to mint a new refresh token.
-func wizardGatherRefreshToken(ctx context.Context, p prompter, out io.Writer, creds clientCreds, cfg *Config, openFn func(string) error, port int) (string, error) {
+func wizardGatherRefreshToken(ctx context.Context, p prompter, out io.Writer, creds clientCreds, cfg *GoogleConfig, openFn func(string) error, port int) (string, error) {
 	if creds.kind == "authorized_user" && creds.refreshToken != "" {
 		return creds.refreshToken, nil
 	}
@@ -321,8 +316,8 @@ func wizardGatherRefreshToken(ctx context.Context, p prompter, out io.Writer, cr
 // runLoginWizard guides first-time setup end to end: prerequisites, OAuth client,
 // sign-in, developer token, optional MCC id, then writes config and verifies with
 // a live API call.
-func runLoginWizard(ctx context.Context, out io.Writer, p prompter, cfg *Config, openFn func(string) error, port int) error {
-	fmt.Fprintln(out, "Welcome to goads. Let's get you connected to Google Ads.")
+func runLoginWizard(ctx context.Context, out io.Writer, p prompter, cfg *GoogleConfig, openFn func(string) error, port int) error {
+	fmt.Fprintln(out, "Welcome to ads. Let's get you connected to Google Ads.")
 	fmt.Fprintln(out, "You'll need: a Google Cloud project, a Desktop-app OAuth client, and a")
 	fmt.Fprintln(out, "Google Ads developer token. I'll walk you through each — about 5 minutes.")
 	fmt.Fprintln(out)
@@ -392,13 +387,13 @@ func runLoginWizard(ctx context.Context, out io.Writer, p prompter, cfg *Config,
 				dashed[i] = dashCustomerID(id)
 			}
 			fmt.Fprintf(out, "✓ Connected — %d accessible account(s): %s\n", len(ids), strings.Join(dashed, ", "))
-			fmt.Fprintln(out, "\nYou're ready. Try:  goads accounts")
+			fmt.Fprintln(out, "\nYou're ready. Try:  ads google accounts")
 			return nil
 		}
 	}
 	fmt.Fprintln(out, "✗")
 	fmt.Fprintf(out, "Saved your config, but verification failed: %v\n", err)
 	fmt.Fprintln(out, "Likely: the developer token isn't approved yet or was mistyped, or an OAuth problem.")
-	fmt.Fprintln(out, "Fix it and re-run `goads login`, or run `goads doctor`.")
+	fmt.Fprintln(out, "Fix it and re-run `ads login google`, or run `ads doctor google`.")
 	return fmt.Errorf("verification failed: %w", err)
 }

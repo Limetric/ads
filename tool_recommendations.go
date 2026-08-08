@@ -111,7 +111,7 @@ var recommendationsListCmd = &cobra.Command{
 	Short: "List active (non-dismissed) recommendations",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		client, err := newClient(cmd.Context())
+		client, err := newGoogleClient(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -128,7 +128,7 @@ var recommendationsApplyCmd = &cobra.Command{
 	Short: "Apply a recommendation (previews first; --confirm to apply)",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		client, err := newClient(cmd.Context())
+		client, err := newGoogleClient(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -145,7 +145,7 @@ var recommendationsDismissCmd = &cobra.Command{
 	Short: "Dismiss a recommendation (previews first; --confirm to apply)",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		client, err := newClient(cmd.Context())
+		client, err := newGoogleClient(cmd.Context())
 		if err != nil {
 			return err
 		}

@@ -105,7 +105,7 @@ var budgetDeleteCmd = &cobra.Command{
 	Short: "Delete an unused campaign budget (previews first; two confirmations required)",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		client, err := newClient(cmd.Context())
+		client, err := newGoogleClient(cmd.Context())
 		if err != nil {
 			return err
 		}

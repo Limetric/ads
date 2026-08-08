@@ -6,8 +6,14 @@ import (
 )
 
 // configDirName is the per-user subdirectory under the OS config dir
-// (~/.config/goads on Linux, ~/Library/Application Support/goads on macOS).
-const configDirName = "goads"
+// (~/.config/ads on Linux, ~/Library/Application Support/ads on macOS). It
+// holds config.toml plus state/ (the confirm-token store and the audit log).
+//
+// It moved with the binary rename and there is no fallback to the old `goads`
+// directory: anyone upgrading has to move it themselves (or re-run
+// `ads login google`). A pre-1.0 break, chosen over carrying a lookup path
+// forever.
+const configDirName = "ads"
 
 // defaultConfigFile is the file consulted when --config is not given.
 const defaultConfigFile = "config.toml"

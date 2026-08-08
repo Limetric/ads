@@ -3,12 +3,12 @@
   "owner": {
     "name": "Limetric"
   },
-  "description": "Skill for driving the goads Google Ads CLI and MCP server from Claude Code.",
+  "description": "Skill for driving the ads multi-platform advertising CLI and MCP server from Claude Code.",
   "plugins": [
     {
-      "name": "goads",
-      "source": "./plugins/goads",
-      "description": "GAQL search/report reads, account listing, and preview-then-confirm campaign writes via the goads CLI."
+      "name": "ads",
+      "source": "./plugins/ads",
+      "description": "GAQL search/report reads, account listing, and preview-then-confirm campaign writes via the ads CLI."
     }
   ]
 }

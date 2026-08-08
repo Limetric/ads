@@ -214,7 +214,7 @@ var pmaxCreateCmd = &cobra.Command{
 		if cmd.Flags().Changed("start-paused") {
 			pmaxArgs.StartPaused = &pmaxStartPaused
 		}
-		client, err := newClient(cmd.Context())
+		client, err := newGoogleClient(cmd.Context())
 		if err != nil {
 			return err
 		}

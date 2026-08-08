@@ -290,7 +290,7 @@ var extSitelinkCmd = &cobra.Command{
 			}
 			draftSitelinksArgs.Sitelinks = append(draftSitelinksArgs.Sitelinks, sl)
 		}
-		client, err := newClient(cmd.Context())
+		client, err := newGoogleClient(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -307,7 +307,7 @@ var extCalloutCmd = &cobra.Command{
 	Short: "Draft callout extensions (previews first; --confirm to apply)",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		client, err := newClient(cmd.Context())
+		client, err := newGoogleClient(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -324,7 +324,7 @@ var extSnippetCmd = &cobra.Command{
 	Short: "Draft structured snippet extensions (previews first; --confirm to apply)",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		client, err := newClient(cmd.Context())
+		client, err := newGoogleClient(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -341,7 +341,7 @@ var extRemoveCmd = &cobra.Command{
 	Short: "Remove a campaign extension (destructive; previews first; --confirm to apply)",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		client, err := newClient(cmd.Context())
+		client, err := newGoogleClient(cmd.Context())
 		if err != nil {
 			return err
 		}

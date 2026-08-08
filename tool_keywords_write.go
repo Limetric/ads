@@ -278,7 +278,7 @@ var keywordsAddCmd = &cobra.Command{
 		for _, s := range draftKeywordStrings {
 			draftKeywordsArgs.Keywords = append(draftKeywordsArgs.Keywords, parseKeywordFlag(s))
 		}
-		client, err := newClient(cmd.Context())
+		client, err := newGoogleClient(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -295,7 +295,7 @@ var keywordsAddNegativeCmd = &cobra.Command{
 	Short: "Add negative keywords to a campaign (previews first; --confirm to apply)",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		client, err := newClient(cmd.Context())
+		client, err := newGoogleClient(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -312,7 +312,7 @@ var keywordsRemoveCmd = &cobra.Command{
 	Short: "Remove keywords from an ad group by criterion ID (destructive)",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		client, err := newClient(cmd.Context())
+		client, err := newGoogleClient(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -329,7 +329,7 @@ var keywordsRemoveNegativeCmd = &cobra.Command{
 	Short: "Remove negative keywords from a campaign by criterion ID (destructive)",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		client, err := newClient(cmd.Context())
+		client, err := newGoogleClient(cmd.Context())
 		if err != nil {
 			return err
 		}

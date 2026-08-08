@@ -1,10 +1,10 @@
 # Build artifacts live in build/ (which has its own .gitignore keeping the dir)
-/goads
-/build/goads
+/ads
+/build/ads
 
 # Local credentials & state — never commit
 *.local.toml
-/.goads/
+/.ads/
 credentials.json
 
 # OS / editor cruft

@@ -29,24 +29,24 @@ func TestGenerateHomebrewFormula(t *testing.T) {
 
 	formula := string(out)
 	wantSubstrings := []string{
-		`class Goads < Formula`,
-		`desc "Google Ads campaign management CLI and MCP server"`,
+		`class Ads < Formula`,
+		`desc "Ad platform management CLI and MCP server"`,
 		`homepage "https://github.com/Limetric/goads"`,
 		`version "1.2.3"`,
 		`license "Apache-2.0"`,
-		`url "https://github.com/Limetric/goads/releases/download/v1.2.3/goads-darwin-arm64"`,
+		`url "https://github.com/Limetric/goads/releases/download/v1.2.3/ads-darwin-arm64"`,
 		`sha256 "darwin-arm64-sha"`,
-		`url "https://github.com/Limetric/goads/releases/download/v1.2.3/goads-darwin-amd64"`,
+		`url "https://github.com/Limetric/goads/releases/download/v1.2.3/ads-darwin-amd64"`,
 		`sha256 "darwin-amd64-sha"`,
-		`url "https://github.com/Limetric/goads/releases/download/v1.2.3/goads-linux-arm64"`,
+		`url "https://github.com/Limetric/goads/releases/download/v1.2.3/ads-linux-arm64"`,
 		`sha256 "linux-arm64-sha"`,
-		`url "https://github.com/Limetric/goads/releases/download/v1.2.3/goads-linux-amd64"`,
+		`url "https://github.com/Limetric/goads/releases/download/v1.2.3/ads-linux-amd64"`,
 		`sha256 "linux-amd64-sha"`,
-		`binary = Dir["goads-*"].first`,
+		`binary = Dir["ads-*"].first`,
 		`chmod 0755, binary`,
-		`bin.install binary => "goads"`,
-		`generate_completions_from_executable(bin/"goads", "completion")`,
-		`system "#{bin}/goads", "version"`,
+		`bin.install binary => "ads"`,
+		`generate_completions_from_executable(bin/"ads", "completion")`,
+		`system "#{bin}/ads", "version"`,
 	}
 
 	for _, want := range wantSubstrings {
@@ -58,9 +58,9 @@ func TestGenerateHomebrewFormula(t *testing.T) {
 
 func TestHomebrewFormulaHasChangesDetectsUntrackedFormula(t *testing.T) {
 	repo := initFormulaGitRepo(t)
-	writeFormulaFile(t, filepath.Join(repo, "Formula", "goads.rb"), "class Goads < Formula\nend\n")
+	writeFormulaFile(t, filepath.Join(repo, "Formula", "ads.rb"), "class Ads < Formula\nend\n")
 
-	cmd := exec.Command("bash", "scripts/homebrew-formula-has-changes.sh", repo, "Formula/goads.rb")
+	cmd := exec.Command("bash", "scripts/homebrew-formula-has-changes.sh", repo, "Formula/ads.rb")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("expected untracked formula to be detected as changed: %v\n%s", err, out)
@@ -69,11 +69,11 @@ func TestHomebrewFormulaHasChangesDetectsUntrackedFormula(t *testing.T) {
 
 func TestHomebrewFormulaHasChangesIgnoresCleanTrackedFormula(t *testing.T) {
 	repo := initFormulaGitRepo(t)
-	writeFormulaFile(t, filepath.Join(repo, "Formula", "goads.rb"), "class Goads < Formula\nend\n")
-	runFormulaGit(t, repo, "add", "Formula/goads.rb")
+	writeFormulaFile(t, filepath.Join(repo, "Formula", "ads.rb"), "class Ads < Formula\nend\n")
+	runFormulaGit(t, repo, "add", "Formula/ads.rb")
 	runFormulaGit(t, repo, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "Add formula")
 
-	cmd := exec.Command("bash", "scripts/homebrew-formula-has-changes.sh", repo, "Formula/goads.rb")
+	cmd := exec.Command("bash", "scripts/homebrew-formula-has-changes.sh", repo, "Formula/ads.rb")
 	out, err := cmd.CombinedOutput()
 	if err == nil {
 		t.Fatalf("expected clean tracked formula to be detected as unchanged\n%s", out)
@@ -82,13 +82,13 @@ func TestHomebrewFormulaHasChangesIgnoresCleanTrackedFormula(t *testing.T) {
 
 func TestHomebrewFormulaHasChangesDetectsModifiedFormula(t *testing.T) {
 	repo := initFormulaGitRepo(t)
-	formula := filepath.Join(repo, "Formula", "goads.rb")
-	writeFormulaFile(t, formula, "class Goads < Formula\nend\n")
-	runFormulaGit(t, repo, "add", "Formula/goads.rb")
+	formula := filepath.Join(repo, "Formula", "ads.rb")
+	writeFormulaFile(t, formula, "class Ads < Formula\nend\n")
+	runFormulaGit(t, repo, "add", "Formula/ads.rb")
 	runFormulaGit(t, repo, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "Add formula")
-	writeFormulaFile(t, formula, "class Goads < Formula\n  version \"1.2.3\"\nend\n")
+	writeFormulaFile(t, formula, "class Ads < Formula\n  version \"1.2.3\"\nend\n")
 
-	cmd := exec.Command("bash", "scripts/homebrew-formula-has-changes.sh", repo, "Formula/goads.rb")
+	cmd := exec.Command("bash", "scripts/homebrew-formula-has-changes.sh", repo, "Formula/ads.rb")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("expected modified formula to be detected as changed: %v\n%s", err, out)

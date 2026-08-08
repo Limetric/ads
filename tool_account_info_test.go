@@ -46,7 +46,7 @@ func TestCLI_AccountsInfoCommand(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("GOOGLE_ADS_API_BASE_URL", srv.URL)
 
-	out, err := runCLI(t, "accounts", "info", "--customer-id", "1234567890")
+	out, err := runCLI(t, "google", "accounts", "info", "--customer-id", "1234567890")
 	if err != nil {
 		t.Fatalf("accounts info: %v\noutput: %s", err, out)
 	}

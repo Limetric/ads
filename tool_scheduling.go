@@ -155,7 +155,7 @@ var scheduleCmd = &cobra.Command{
 			}
 			scheduleArgs.Schedules = append(scheduleArgs.Schedules, entry)
 		}
-		client, err := newClient(cmd.Context())
+		client, err := newGoogleClient(cmd.Context())
 		if err != nil {
 			return err
 		}

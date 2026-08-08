@@ -41,9 +41,9 @@ func TestLoadConfig_EnvOnly(t *testing.T) {
 	t.Setenv("GOOGLE_ADS_CLIENT_ID", "cid")
 	t.Setenv("GOOGLE_ADS_LOGIN_CUSTOMER_ID", "123-456-7890")
 
-	cfg, err := loadConfig("")
+	cfg, err := loadGoogleConfig("")
 	if err != nil {
-		t.Fatalf("loadConfig: %v", err)
+		t.Fatalf("loadGoogleConfig: %v", err)
 	}
 	if cfg.DeveloperToken != "devtok" || cfg.ClientID != "cid" {
 		t.Errorf("env not applied: %+v", cfg)
@@ -66,9 +66,9 @@ func TestLoadConfig_TOMLOverlaidByEnv(t *testing.T) {
 	}
 	t.Setenv("GOOGLE_ADS_DEVELOPER_TOKEN", "from-env") // overrides the file
 
-	cfg, err := loadConfig(path)
+	cfg, err := loadGoogleConfig(path)
 	if err != nil {
-		t.Fatalf("loadConfig: %v", err)
+		t.Fatalf("loadGoogleConfig: %v", err)
 	}
 	if cfg.DeveloperToken != "from-env" {
 		t.Errorf("env should override file: got %q", cfg.DeveloperToken)
@@ -89,9 +89,9 @@ func TestLoadConfig_DefaultCustomerID(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfg, err := loadConfig(path)
+	cfg, err := loadGoogleConfig(path)
 	if err != nil {
-		t.Fatalf("loadConfig: %v", err)
+		t.Fatalf("loadGoogleConfig: %v", err)
 	}
 	if cfg.DefaultCustomerID != "1111111111" {
 		t.Errorf("file default should be normalized: got %q", cfg.DefaultCustomerID)
@@ -99,9 +99,9 @@ func TestLoadConfig_DefaultCustomerID(t *testing.T) {
 
 	// The env var overrides the file and is normalized too.
 	t.Setenv("GOOGLE_ADS_CUSTOMER_ID", "222-222-2222")
-	cfg, err = loadConfig(path)
+	cfg, err = loadGoogleConfig(path)
 	if err != nil {
-		t.Fatalf("loadConfig: %v", err)
+		t.Fatalf("loadGoogleConfig: %v", err)
 	}
 	if cfg.DefaultCustomerID != "2222222222" {
 		t.Errorf("env should override file: got %q", cfg.DefaultCustomerID)
@@ -109,8 +109,8 @@ func TestLoadConfig_DefaultCustomerID(t *testing.T) {
 }
 
 func TestResolveCustomerID(t *testing.T) {
-	withDefault := &Client{cfg: &Config{DefaultCustomerID: "1111111111"}}
-	noDefault := &Client{cfg: &Config{}}
+	withDefault := &Client{cfg: &GoogleConfig{DefaultCustomerID: "1111111111"}}
+	noDefault := &Client{cfg: &GoogleConfig{}}
 
 	tests := []struct {
 		name     string
@@ -150,13 +150,13 @@ func TestResolveCustomerID(t *testing.T) {
 
 func TestLoadConfig_MissingFileErrors(t *testing.T) {
 	clearAdsEnv(t)
-	if _, err := loadConfig("/no/such/config-file.toml"); err == nil {
+	if _, err := loadGoogleConfig("/no/such/config-file.toml"); err == nil {
 		t.Fatal("expected error for an explicit but unreadable config path")
 	}
 }
 
 func TestConfig_Validate(t *testing.T) {
-	missing := (&Config{BaseURL: defaultBaseURL}).validate()
+	missing := (&GoogleConfig{BaseURL: defaultBaseURL}).validate()
 	if missing == nil {
 		t.Fatal("expected missing-credentials error against production base URL")
 	}
@@ -169,11 +169,11 @@ func TestConfig_Validate(t *testing.T) {
 		}
 	}
 	// A non-production base URL relaxes the credential requirement (test mode).
-	if err := (&Config{BaseURL: "http://localhost:1"}).validate(); err != nil {
+	if err := (&GoogleConfig{BaseURL: "http://localhost:1"}).validate(); err != nil {
 		t.Errorf("test base URL should skip validation: %v", err)
 	}
 	// Complete production credentials validate.
-	full := &Config{BaseURL: defaultBaseURL, DeveloperToken: "d", ClientID: "c", ClientSecret: "s", RefreshToken: "r"}
+	full := &GoogleConfig{BaseURL: defaultBaseURL, DeveloperToken: "d", ClientID: "c", ClientSecret: "s", RefreshToken: "r"}
 	if err := full.validate(); err != nil {
 		t.Errorf("complete credentials should validate: %v", err)
 	}
@@ -192,7 +192,7 @@ func TestConfig_IsTest(t *testing.T) {
 		"http://internal-proxy:8080/v23":        false, // remote plain-HTTP: REAL credentials, not test mode
 	}
 	for baseURL, want := range cases {
-		if got := (&Config{BaseURL: baseURL}).isTest(); got != want {
+		if got := (&GoogleConfig{BaseURL: baseURL}).isTest(); got != want {
 			t.Errorf("isTest(%q) = %t, want %t", baseURL, got, want)
 		}
 	}
@@ -200,7 +200,7 @@ func TestConfig_IsTest(t *testing.T) {
 
 func TestFinalize_NormalizesBaseURL(t *testing.T) {
 	clearAdsEnv(t)
-	cfg := &Config{BaseURL: "https://googleads.googleapis.com/v23/"}
+	cfg := &GoogleConfig{BaseURL: "https://googleads.googleapis.com/v23/"}
 	cfg.finalize()
 	if cfg.BaseURL != "https://googleads.googleapis.com/v23" {
 		t.Errorf("trailing slash should be trimmed, got %q", cfg.BaseURL)

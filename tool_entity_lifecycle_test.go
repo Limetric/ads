@@ -146,7 +146,7 @@ func TestCLI_PauseCommand_PreviewThenApply(t *testing.T) {
 	t.Setenv("GOOGLE_ADS_API_BASE_URL", srv.URL) // non-prod → skips OAuth/creds
 	resetPauseCmd(t)
 
-	out, err := runCLI(t, "pause", "--customer-id", "1", "--type", "campaign", "--id", "42")
+	out, err := runCLI(t, "google", "pause", "--customer-id", "1", "--type", "campaign", "--id", "42")
 	if err != nil {
 		t.Fatalf("execute pause preview: %v\noutput: %s", err, out)
 	}
@@ -158,7 +158,7 @@ func TestCLI_PauseCommand_PreviewThenApply(t *testing.T) {
 		t.Fatalf("preview should stage without mutating: %+v calls=%d", prev, cap.calls)
 	}
 
-	out, err = runCLI(t, "pause", "--customer-id", "1", "--type", "campaign", "--id", "42", "--confirm", prev.Token)
+	out, err = runCLI(t, "google", "pause", "--customer-id", "1", "--type", "campaign", "--id", "42", "--confirm", prev.Token)
 	if err != nil {
 		t.Fatalf("execute pause apply: %v\noutput: %s", err, out)
 	}
@@ -173,7 +173,7 @@ func TestCLI_PauseCommand_PreviewThenApply(t *testing.T) {
 
 func TestCLI_PauseRequiresFlags(t *testing.T) {
 	resetPauseCmd(t)
-	if out, err := runCLI(t, "pause", "--customer-id", "1"); err == nil {
+	if out, err := runCLI(t, "google", "pause", "--customer-id", "1"); err == nil {
 		t.Fatalf("pause without --type/--id should fail; output: %s", out)
 	}
 }

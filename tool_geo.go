@@ -119,7 +119,7 @@ var geoSearchCmd = &cobra.Command{
 	Short: "Search geo target constants by name (find location IDs)",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		client, err := newClient(cmd.Context())
+		client, err := newGoogleClient(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -136,7 +136,7 @@ var geoPerfCmd = &cobra.Command{
 	Short: "Show geographic performance for campaigns",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		client, err := newClient(cmd.Context())
+		client, err := newGoogleClient(cmd.Context())
 		if err != nil {
 			return err
 		}
