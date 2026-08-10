@@ -263,7 +263,23 @@ type applyOutcome struct {
 // staging, confirming, double-confirmation, and auditing are shared and only
 // the final API call is platform-specific.
 type mutationApplier interface {
+	// platformName is the namespace this client writes to. A staged write
+	// records the platform that created it, and the two must agree before
+	// anything is applied: tool names are not unique across platforms — both
+	// networks have a set_campaign_budget — so the tool binding alone would let
+	// one platform's token be handed to another platform's API.
+	platformName() string
 	applyMutation(ctx context.Context, p *PendingMutation) (*applyOutcome, error)
+}
+
+// platform is the namespace that staged this write. An empty field means
+// Google: pending files written before the field existed are still confirmable,
+// and Google was the only platform that could have written one.
+func (p *PendingMutation) platform() string {
+	if p.Platform == "" {
+		return googlePlatformName
+	}
+	return p.Platform
 }
 
 // previewText renders a staged mutation for a human/agent to review.

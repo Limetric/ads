@@ -65,8 +65,17 @@ func applyConfirmed(ctx context.Context, c mutationApplier, tool, confirm string
 	if err != nil {
 		return WriteResult{}, err
 	}
-	// A token is bound to the tool that staged it: confirming a remove_entity
-	// preview through enable_entity must not execute the removal (issue #6).
+	// A token is bound to the platform *and* the tool that staged it.
+	//
+	// The tool binding is issue #6: confirming a remove_entity preview through
+	// enable_entity must not execute the removal. The platform binding is what
+	// keeps that true once two networks name a tool the same way — without it,
+	// a Google budget token passed to `ads bing budget set --confirm` clears
+	// the tool check and reaches Bing's applier, which fails on a route it has
+	// never heard of after the staged Google write is already gone.
+	if staged := p.platform(); staged != c.platformName() {
+		return WriteResult{}, fmt.Errorf("confirmation token was issued for %s, not %s — the staged operation (%s) has been discarded; re-run the original command against %s for a fresh preview", staged, c.platformName(), p.Summary, staged)
+	}
 	if p.Tool != tool {
 		return WriteResult{}, fmt.Errorf("confirmation token was issued by %q, not %q — the staged operation (%s) has been discarded; re-run the original command for a fresh preview", p.Tool, tool, p.Summary)
 	}

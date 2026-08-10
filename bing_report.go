@@ -221,6 +221,18 @@ func (c *BingClient) PollReport(ctx context.Context, accountID, requestID string
 	}, nil
 }
 
+// reportGenerationError means the service itself finished the report and failed
+// it. It is deliberately distinguishable from every other way a poll can fail,
+// because it is the only one that says the queued report will never produce
+// rows: a throttled poll, a 5xx, or a cancelled context all leave the report
+// generating server-side, and a caller that treats those as terminal would
+// throw away a handle that was about to work.
+type reportGenerationError struct{ requestID string }
+
+func (e *reportGenerationError) Error() string {
+	return fmt.Sprintf("the reporting service failed to generate report %s — re-run the command to submit a new one", e.requestID)
+}
+
 // awaitBingReport polls until the report is ready, the deadline passes, or the
 // service reports failure. ready is false when the deadline passed with the
 // report still running — the caller then hands back a job.
@@ -236,7 +248,7 @@ func awaitBingReport(ctx context.Context, c *BingClient, accountID, requestID st
 		case bingReportSuccess:
 			return status, true, nil
 		case bingReportError:
-			return status, false, fmt.Errorf("the reporting service failed to generate report %s — re-run the command to submit a new one", requestID)
+			return status, false, &reportGenerationError{requestID: requestID}
 		}
 		select {
 		case <-time.After(bingReportPollInterval):

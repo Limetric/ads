@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/oauth2"
@@ -89,17 +90,27 @@ func newTokenSource(ctx context.Context, oc oauthClient) oauth2.TokenSource {
 // *oauth2.RetrieveError — the type doctor classifies and tokenPolicy.authError
 // turns into "run `ads login <platform>`".
 //
-// Each call carries the refresh token this source was built with rather than
-// the last one the provider handed back: the rotated value is persisted by
-// persistingTokenSource, which wraps this, and a process that outlives one
-// rotation re-reads it from the store on its next run.
+// The refresh token it holds is replaced by whatever the provider hands back,
+// exactly as x/oauth2's tokenRefresher does. On a rotating platform that is not
+// bookkeeping, it is the difference between working and not: a long-lived
+// process (an `ads mcp` server outliving the access-token lifetime) refreshes
+// more than once, and presenting the token that the *previous* refresh already
+// replaced fails with invalid_grant — sending the user to `ads login` when the
+// store holds a perfectly good token and a restart would have fixed it.
 type scopedRefreshSource struct {
-	ctx          context.Context
-	conf         *oauth2.Config
+	ctx  context.Context
+	conf *oauth2.Config
+
+	// mu guards refreshToken. ReuseTokenSource already serializes calls to
+	// Token, but a client documented as safe for concurrent use should not
+	// depend on the caching wrapper for that.
+	mu           sync.Mutex
 	refreshToken string
 }
 
 func (s *scopedRefreshSource) Token() (*oauth2.Token, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.refreshToken == "" {
 		return nil, errors.New("no refresh token to redeem")
 	}
@@ -158,10 +169,12 @@ func (s *scopedRefreshSource) Token() (*oauth2.Token, error) {
 		tok.Expiry = time.Now().Add(time.Duration(payload.ExpiresIn) * time.Second)
 	}
 	// A provider that rotates its refresh token sends the replacement here; one
-	// that doesn't leaves the field empty, and the caller keeps using the token
-	// it already has.
+	// that doesn't leaves the field empty, and the token we already hold stays
+	// current. Either way the next refresh redeems the newest one we have seen.
 	if tok.RefreshToken == "" {
 		tok.RefreshToken = s.refreshToken
+	} else {
+		s.refreshToken = tok.RefreshToken
 	}
 	return tok, nil
 }

@@ -25,6 +25,10 @@ func previewBingWrite(w pendingWrite) (WriteResult, error) {
 	return previewResult(p), nil
 }
 
+// platformName makes *BingClient a mutationApplier: Bing's namespace, which the
+// confirm path checks a staged write against before applying it.
+func (c *BingClient) platformName() string { return bingPlatformName }
+
 // applyMutation makes *BingClient a mutationApplier: it executes a consumed
 // pending write against the operation its Dispatch names.
 //

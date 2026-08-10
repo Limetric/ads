@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -112,7 +113,7 @@ func runBingReportTool(ctx context.Context, c *BingClient, preset bingReportPres
 	}
 	status, ready, err := awaitBingReport(ctx, c, accountID, requestID, bingReportDeadline)
 	if err != nil {
-		return BingReportResult{}, toolError(preset.Tool, err)
+		return BingReportResult{}, toolError(preset.Tool, bingPollFailure(spec, requestID, err))
 	}
 	if !ready {
 		return bingQueuedResult(spec, requestID)
@@ -124,15 +125,39 @@ func runBingReportTool(ctx context.Context, c *BingClient, preset bingReportPres
 	return bingRowsResult(spec.AccountID, spec.dateRange(), spec.columns(), columns, rows), nil
 }
 
-// bingQueuedResult persists a job handle and describes it.
+// bingPollFailure keeps a queued report reachable when it was the *poll* that
+// failed rather than the report.
 //
-// The report is already running at this point, so a handle that cannot be saved
-// is a failure worth reporting: the alternative is telling the user their data
-// is coming and giving them no way to collect it.
-func bingQueuedResult(spec bingReportSpec, requestID string) (BingReportResult, error) {
+// The submit already succeeded, so the report is generating server-side with a
+// request ID this process is the only holder of. Dropping that ID on a throttled
+// or transient poll would force a resubmission — which counts against the
+// in-flight report limit that likely caused the throttle. A report the service
+// itself failed is the exception: there is nothing to come back for.
+func bingPollFailure(spec bingReportSpec, requestID string, cause error) error {
+	var generation *reportGenerationError
+	if errors.As(cause, &generation) {
+		return cause
+	}
+	job, err := newBingReportJob(spec, requestID)
+	if err != nil {
+		// Nowhere to record the handle: report the original failure, which is
+		// the one the user can act on.
+		return cause
+	}
+	return fmt.Errorf("%w — the report is still queued; collect it with `ads %s report fetch %s`",
+		cause, bingPlatformName, job.ID)
+}
+
+// newBingReportJob mints and persists a handle for a report that is already
+// queued with the service.
+//
+// Failing to save is fatal to the call rather than cosmetic: the report is
+// running either way, and handing back a handle that cannot be fetched would
+// promise data the user has no way to collect.
+func newBingReportJob(spec bingReportSpec, requestID string) (*bingReportJob, error) {
 	id, err := newBingJobID()
 	if err != nil {
-		return BingReportResult{}, err
+		return nil, err
 	}
 	job := &bingReportJob{
 		ID:              id,
@@ -144,6 +169,15 @@ func bingQueuedResult(spec bingReportSpec, requestID string) (BingReportResult, 
 		SubmittedAt:     time.Now().UTC(),
 	}
 	if err := saveBingReportJob(job); err != nil {
+		return nil, err
+	}
+	return job, nil
+}
+
+// bingQueuedResult persists a job handle and describes it.
+func bingQueuedResult(spec bingReportSpec, requestID string) (BingReportResult, error) {
+	job, err := newBingReportJob(spec, requestID)
+	if err != nil {
 		return BingReportResult{}, toolError(spec.Preset.Tool, err)
 	}
 	return BingReportResult{
@@ -198,9 +232,16 @@ func runBingReportFetch(ctx context.Context, c *BingClient, args BingReportFetch
 	}
 	status, ready, err := awaitBingReport(ctx, c, job.AccountID, job.ReportRequestID, bingReportDeadline)
 	if err != nil {
-		// A report the service failed to generate is finished, badly: keeping
-		// its handle would only offer to fetch it again forever.
-		deleteBingReportJob(job.ID)
+		// Only a report the service itself failed is finished: its handle can
+		// never produce rows, so it goes. Every other failure — a throttled
+		// poll, a 5xx, a cancelled context — leaves the report generating
+		// server-side, and deleting the handle there would strand it and force
+		// a resubmission, which counts against the in-flight report limit that
+		// probably caused the throttle in the first place.
+		var generation *reportGenerationError
+		if errors.As(err, &generation) {
+			deleteBingReportJob(job.ID)
+		}
 		return BingReportResult{}, toolError(tool, err)
 	}
 	if !ready {

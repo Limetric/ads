@@ -56,19 +56,12 @@ func runConfirm(ctx context.Context, c mutationApplier, token string) (ConfirmRe
 // is never applied through Google's API — and the client is built only for the
 // platform being confirmed, so an unconfigured second platform cannot break a
 // confirm for the first.
-//
-// A pending file with no platform (staged before the field existed, so at most
-// confirmTTL old) is Google's, which is the only platform that could have
-// written it.
 func applierForToken(ctx context.Context, token string) (mutationApplier, string, error) {
 	p, err := peekMutation(token)
 	if err != nil {
 		return nil, "", err
 	}
-	name := p.Platform
-	if name == "" {
-		name = googlePlatformName
-	}
+	name := p.platform()
 	plat, err := lookupPlatform(name)
 	if err != nil {
 		return nil, "", fmt.Errorf("confirmation %q was staged by unknown platform %q: %w", token, name, err)

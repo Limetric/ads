@@ -585,3 +585,132 @@ func TestRunBingBudgetSet_ConfirmRevalidatesTheSpendCap(t *testing.T) {
 		t.Error("nothing should have been written")
 	}
 }
+
+func TestRunBingReportFetch_KeepsTheHandleWhenThePollItselfFails(t *testing.T) {
+	bingThrottleBaseDelay = time.Millisecond
+	t.Cleanup(func() { bingThrottleBaseDelay = 2 * time.Second })
+	useTempState(t)
+
+	// The poll is throttled, not the report: the report is still generating
+	// server-side, so the handle has to survive. Deleting it would force a
+	// resubmission, which counts against the in-flight report limit that
+	// probably caused the throttle.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"Errors":[{"Code":117,"ErrorCode":"CallRateExceeded","Message":"slow down"}]}`))
+	}))
+	defer srv.Close()
+	c := newTestBingClient(t, srv)
+
+	id, _ := newBingJobID()
+	if err := saveBingReportJob(&bingReportJob{ID: id, ReportRequestID: "req-1", AccountID: "123456", SubmittedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runBingReportFetch(t.Context(), c, BingReportFetchArgs{Job: id}); err == nil {
+		t.Fatal("expected the throttle to surface")
+	}
+	if _, err := loadBingReportJob(id); err != nil {
+		t.Errorf("a transient poll failure must not consume the handle: %v", err)
+	}
+}
+
+func TestRunBingReportFetch_DropsTheHandleWhenTheServiceFailedTheReport(t *testing.T) {
+	useTempState(t)
+
+	// The service finished the report and failed it: this handle can never
+	// produce rows, so keeping it would only offer to fetch it forever.
+	srv := bingJSONServer(t, map[string]string{
+		"/GenerateReport/Poll": `{"ReportRequestStatus":{"Status":"Error"}}`,
+	})
+	defer srv.Close()
+	c := newTestBingClient(t, srv)
+
+	id, _ := newBingJobID()
+	if err := saveBingReportJob(&bingReportJob{ID: id, ReportRequestID: "req-1", AccountID: "123456", SubmittedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runBingReportFetch(t.Context(), c, BingReportFetchArgs{Job: id}); err == nil {
+		t.Fatal("expected the failed report to surface")
+	}
+	if _, err := loadBingReportJob(id); err == nil {
+		t.Error("a report the service failed should not leave a fetchable handle")
+	}
+}
+
+func TestRunBingReportTool_KeepsAHandleWhenTheFirstPollFails(t *testing.T) {
+	bingThrottleBaseDelay = time.Millisecond
+	t.Cleanup(func() { bingThrottleBaseDelay = 2 * time.Second })
+	useTempState(t)
+
+	// Submit succeeds, so the report is queued and this process holds the only
+	// copy of its request ID. A throttled poll must not throw that away.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/GenerateReport/Submit") {
+			_, _ = w.Write([]byte(`{"ReportRequestId":"req-1"}`))
+			return
+		}
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"Errors":[{"Code":117,"ErrorCode":"CallRateExceeded","Message":"slow down"}]}`))
+	}))
+	defer srv.Close()
+	c := newTestBingClient(t, srv)
+
+	_, err := runBingReportTool(t.Context(), c, bingCampaignPerformancePreset, BingPerformanceArgs{})
+	if err == nil {
+		t.Fatal("expected the throttle to surface")
+	}
+	// The error has to hand back the handle, or the queued report is stranded
+	// until it expires and the user resubmits.
+	if !strings.Contains(err.Error(), "report fetch job_") {
+		t.Errorf("error should name the handle that collects the queued report: %v", err)
+	}
+}
+
+func TestApplyConfirmed_RejectsAnotherPlatformsToken(t *testing.T) {
+	useTempState(t)
+	srv, update := bingBudgetServer(t, `{"Id":"1","Name":"Brand","DailyBudget":25.0}`, "")
+	defer srv.Close()
+	bing := newTestBingClient(t, srv)
+
+	// Both platforms name this tool set_campaign_budget, so the tool binding
+	// alone would let a Google token through to Bing's applier.
+	staged, err := stageMutation("set_campaign_budget", "1234567890", "Google budget change", []any{
+		map[string]any{"campaignBudgetOperation": map[string]any{"update": map[string]any{"amountMicros": 1}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = applyConfirmed(t.Context(), bing, "set_campaign_budget", staged.Token)
+	if err == nil {
+		t.Fatal("a Google token must not be applied through Bing's API")
+	}
+	for _, want := range []string{"google", "bing"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the error should name both platforms (missing %q): %v", want, err)
+		}
+	}
+	if *update != nil {
+		t.Error("nothing should have been written")
+	}
+}
+
+func TestApplyConfirmed_AcceptsItsOwnPlatformsToken(t *testing.T) {
+	useTempState(t)
+	srv, update := bingBudgetServer(t, `{"Id":"1","Name":"Brand","DailyBudget":25.0}`, "")
+	defer srv.Close()
+	c := newTestBingClient(t, srv)
+
+	preview, err := runBingBudgetSet(t.Context(), c, BingBudgetSetArgs{CampaignID: "1", DailyBudget: 30})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := applyConfirmed(t.Context(), c, "set_campaign_budget", preview.Token)
+	if err != nil {
+		t.Fatalf("a platform's own token must still apply: %v", err)
+	}
+	if !res.Applied || *update == nil {
+		t.Error("the write should have been applied")
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -158,5 +159,41 @@ func TestNewTokenSource_PersistsARotatedRefreshToken(t *testing.T) {
 	}
 	if stored.ClientID != "cid" {
 		t.Errorf("the client binding must survive a rotation, got %q", stored.ClientID)
+	}
+}
+
+func TestScopedRefreshSource_RedeemsTheRotatedTokenOnTheNextRefresh(t *testing.T) {
+	var sent []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		sent = append(sent, r.PostForm.Get("refresh_token"))
+		w.Header().Set("Content-Type", "application/json")
+		// Entra hands back a new refresh token every time and expects the old
+		// one to be discarded.
+		_, _ = io.WriteString(w, `{"access_token":"at","refresh_token":"rt`+strconv.Itoa(len(sent)+1)+`","token_type":"Bearer","expires_in":3600}`)
+	}))
+	defer srv.Close()
+
+	src := &scopedRefreshSource{
+		ctx:          t.Context(),
+		conf:         &oauth2.Config{ClientID: "cid", Endpoint: oauth2.Endpoint{TokenURL: srv.URL}, Scopes: bingScopes},
+		refreshToken: "rt1",
+	}
+	for i := range 3 {
+		if _, err := src.Token(); err != nil {
+			t.Fatalf("refresh %d: %v", i+1, err)
+		}
+	}
+	// A long-lived `ads mcp` process refreshes more than once. Re-sending the
+	// token a previous refresh already replaced fails with invalid_grant and
+	// sends the user to `ads login` for nothing.
+	want := []string{"rt1", "rt2", "rt3"}
+	if len(sent) != len(want) {
+		t.Fatalf("sent = %v", sent)
+	}
+	for i := range want {
+		if sent[i] != want[i] {
+			t.Errorf("refresh %d sent %q, want %q (the newest token seen)", i+1, sent[i], want[i])
+		}
 	}
 }

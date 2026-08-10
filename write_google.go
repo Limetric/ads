@@ -69,6 +69,10 @@ func previewMutateDouble(tool, customerID, summary string, ops []any) (WriteResu
 	return previewResult(p), nil
 }
 
+// platformName makes *Client a mutationApplier: Google's namespace, which the
+// confirm path checks a staged write against before applying it.
+func (c *Client) platformName() string { return googlePlatformName }
+
 // applyMutation makes *Client a mutationApplier: it executes a consumed pending
 // write via the endpoint selected by its Dispatch — the dedicated
 // recommendation RPCs, the resumable upload, or the default mutate path.
