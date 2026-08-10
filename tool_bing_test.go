@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -712,5 +713,82 @@ func TestApplyConfirmed_AcceptsItsOwnPlatformsToken(t *testing.T) {
 	}
 	if !res.Applied || *update == nil {
 		t.Error("the write should have been applied")
+	}
+}
+
+func TestBingCampaign_SharedBudgetIsReadByValue(t *testing.T) {
+	// Microsoft documents both BudgetId and BidStrategyId the same way: not
+	// null *and greater than zero* means the campaign uses the shared entity,
+	// and "0" is what you write to detach it. Presence is not the test.
+	zero, blank, real := "0", "", "900"
+	tests := []struct {
+		name string
+		id   *string
+		want string
+	}{
+		{"absent", nil, ""},
+		{"detached", &zero, ""},
+		{"blank", &blank, ""},
+		{"shared", &real, "900"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := BingCampaign{BudgetID: tc.id, BidStrategyID: tc.id}
+			if got := c.sharedBudgetID(); got != tc.want {
+				t.Errorf("sharedBudgetID() = %q, want %q", got, tc.want)
+			}
+			if got := c.portfolioBidStrategyID(); got != tc.want {
+				t.Errorf("portfolioBidStrategyID() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRunBingBudgetSet_DetachedSharedBudgetIsWritable(t *testing.T) {
+	useTempState(t)
+	// BudgetId "0" means the campaign was moved off its shared budget and owns
+	// its DailyBudget again — the API accepts this write.
+	srv, update := bingBudgetServer(t, `{"Id":"1","Name":"Brand","DailyBudget":25.0,"BudgetId":"0"}`, "")
+	defer srv.Close()
+	c := newTestBingClient(t, srv)
+
+	preview, err := runBingBudgetSet(t.Context(), c, BingBudgetSetArgs{CampaignID: "1", DailyBudget: 30})
+	if err != nil {
+		t.Fatalf("a detached campaign must be writable: %v", err)
+	}
+	if _, err := runBingBudgetSet(t.Context(), c, BingBudgetSetArgs{CampaignID: "1", DailyBudget: 30, Confirm: preview.Token}); err != nil {
+		t.Fatalf("confirm: %v", err)
+	}
+	if *update == nil {
+		t.Error("the write should have been applied")
+	}
+}
+
+func TestRunBingCampaigns_DetachedSharedBudgetIsNotReported(t *testing.T) {
+	srv := bingJSONServer(t, map[string]string{
+		"/Campaigns/QueryByAccountId": `{"Campaigns":[{"Id":"1","Name":"Brand","BudgetId":"0","BidStrategyId":"0"}]}`,
+	})
+	defer srv.Close()
+
+	res, err := runBingCampaigns(t.Context(), newTestBingClient(t, srv), BingCampaignsArgs{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Campaigns[0].SharedBudgetID != "" {
+		t.Errorf("shared_budget_id = %q, want empty for a detached campaign", res.Campaigns[0].SharedBudgetID)
+	}
+	if res.Campaigns[0].BidStrategyID != "" {
+		t.Errorf("bid_strategy_id = %q, want empty for a campaign with its own strategy", res.Campaigns[0].BidStrategyID)
+	}
+}
+
+func TestBingAllCampaignTypes_CoversTheWholeValueSet(t *testing.T) {
+	// The v13 CampaignType value set. A type missing from the filter is
+	// invisible to `bing_campaigns` and, because GetCampaign filters that same
+	// list, unwritable by bing_set_campaign_budget.
+	for _, want := range []string{"Search", "Shopping", "DynamicSearchAds", "Audience", "Hotel", "PerformanceMax", "App"} {
+		if !slices.Contains(strings.Fields(bingAllCampaignTypes), want) {
+			t.Errorf("campaign type %q is missing from the filter (%q)", want, bingAllCampaignTypes)
+		}
 	}
 }

@@ -65,9 +65,12 @@ func runBingBudgetSet(ctx context.Context, c *BingClient, args BingBudgetSetArgs
 	if campaign == nil {
 		return WriteResult{}, toolError(tool, fmt.Errorf("campaign %s was not found in account %s — check the ID with `ads %s campaigns`", campaignID, accountID, bingPlatformName))
 	}
-	if campaign.BudgetID != nil && *campaign.BudgetID != "" {
+	// By value, not by presence: a campaign that was moved off a shared budget
+	// still carries BudgetId "0", and refusing that one would send the user to
+	// the UI for a write the API would have accepted.
+	if shared := campaign.sharedBudgetID(); shared != "" {
 		return WriteResult{}, toolError(tool, fmt.Errorf("campaign %s draws on shared budget %s — its daily amount belongs to the budget, not the campaign, and ads cannot change shared budgets yet. Change it in the Microsoft Advertising UI, or move the campaign to its own budget",
-			campaignID, *campaign.BudgetID))
+			campaignID, shared))
 	}
 
 	operation := map[string]any{"Id": campaignID, "DailyBudget": args.DailyBudget}

@@ -68,12 +68,8 @@ func runBingCampaigns(ctx context.Context, c *BingClient, args BingCampaignsArgs
 			BudgetType:   campaign.BudgetType,
 			TimeZone:     campaign.TimeZone,
 		}
-		if campaign.BudgetID != nil {
-			row.SharedBudgetID = *campaign.BudgetID
-		}
-		if campaign.BidStrategyID != nil {
-			row.BidStrategyID = *campaign.BidStrategyID
-		}
+		row.SharedBudgetID = campaign.sharedBudgetID()
+		row.BidStrategyID = campaign.portfolioBidStrategyID()
 		rows = append(rows, row)
 	}
 	return BingCampaignsResult{

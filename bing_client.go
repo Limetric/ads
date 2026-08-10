@@ -462,11 +462,16 @@ func (c *BingClient) GetAccount(ctx context.Context, accountID string) (*BingAcc
 
 // --- campaign management --------------------------------------------------
 
-// bingAllCampaignTypes is the CampaignType filter ads asks for. The element is
-// documented as optional with a default of *Search*, so leaving it out would
-// silently hide every Shopping and Performance Max campaign in the account —
-// the values are space-delimited flags, not a list.
-const bingAllCampaignTypes = "Search Shopping DynamicSearchAds Audience PerformanceMax"
+// bingAllCampaignTypes is the CampaignType filter ads asks for: every value in
+// the v13 CampaignType set, as space-delimited flags rather than a list.
+//
+// The element is documented as optional with a default of *Search*, so leaving
+// it out — or leaving a value out of it — silently hides those campaigns.
+// Anything missing here is invisible twice over: absent from `bing_campaigns`
+// with a total_count to match, and absent from the list GetCampaign filters, so
+// a budget write against a campaign the user is looking at in the Microsoft UI
+// fails with "campaign not found".
+const bingAllCampaignTypes = "Search Shopping DynamicSearchAds Audience Hotel PerformanceMax App"
 
 // BingCampaign is a campaign as the REST API returns it. Money fields are plain
 // currency amounts, not micros.
@@ -478,12 +483,43 @@ type BingCampaign struct {
 	SubType      string   `json:"SubType,omitempty"`
 	DailyBudget  *float64 `json:"DailyBudget"`
 	BudgetType   string   `json:"BudgetType"`
-	// BudgetID is set when the campaign draws on a shared budget, in which case
-	// DailyBudget is not the campaign's to change.
-	BudgetID      *string `json:"BudgetId"`
-	TimeZone      string  `json:"TimeZone,omitempty"`
+	// BudgetID references the shared Budget this campaign draws on. Read it
+	// through sharedBudgetID: the field is meaningful by value, not by presence.
+	BudgetID *string `json:"BudgetId"`
+	TimeZone string  `json:"TimeZone,omitempty"`
+	// BidStrategyID references a portfolio bid strategy, with the same
+	// value semantics as BudgetID. Read it through portfolioBidStrategyID.
 	BidStrategyID *string `json:"BidStrategyId,omitempty"`
 }
+
+// bingOptionalID reads one of Microsoft's "reference or nothing" identifier
+// fields.
+//
+// Both BudgetId and BidStrategyId are documented the same way: a value that is
+// not null *and greater than zero* means the campaign uses the shared entity,
+// and zero is the value you write to detach it. So a campaign that was moved
+// off a shared budget comes back carrying "0", and reading presence instead of
+// value would report it as still shared — which, for BudgetId, blocks the only
+// Bing write tool there is.
+func bingOptionalID(id *string) string {
+	if id == nil {
+		return ""
+	}
+	switch v := strings.TrimSpace(*id); v {
+	case "", "0":
+		return ""
+	default:
+		return v
+	}
+}
+
+// sharedBudgetID is the shared Budget this campaign draws on, or "" when it
+// uses its own DailyBudget.
+func (c *BingCampaign) sharedBudgetID() string { return bingOptionalID(c.BudgetID) }
+
+// portfolioBidStrategyID is the portfolio bid strategy this campaign shares, or
+// "" when it uses its own.
+func (c *BingCampaign) portfolioBidStrategyID() string { return bingOptionalID(c.BidStrategyID) }
 
 // ListCampaigns returns every campaign in an account.
 func (c *BingClient) ListCampaigns(ctx context.Context, accountID string) ([]BingCampaign, error) {
