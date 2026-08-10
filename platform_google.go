@@ -1,6 +1,16 @@
 package main
 
-import "github.com/spf13/cobra"
+import (
+	"context"
+
+	"github.com/spf13/cobra"
+)
+
+// googlePlatformName is Google's namespace. It is a constant rather than a
+// read of googlePlatform.Name so the write path can stamp it on a staged
+// mutation without the package-level initializers forming a cycle (the platform
+// value refers to the commands, which refer back to the write path).
+const googlePlatformName = "google"
 
 // googlePlatform is the Google Ads surface: `ads google …` on the CLI and
 // `google_…` over MCP.
@@ -9,7 +19,7 @@ import "github.com/spf13/cobra"
 // before any init() function — so main.go's init() sees this platform no matter
 // how the files sort.
 var googlePlatform = registerPlatform(&Platform{
-	Name:  "google",
+	Name:  googlePlatformName,
 	Title: "Google Ads",
 	Short: "Google Ads campaign management",
 
@@ -50,4 +60,27 @@ var googlePlatform = registerPlatform(&Platform{
 	RegisterMCP: registerGoogleTools,
 	ShowConfig:  googleShowConfig,
 	Doctor:      googleDoctor,
+	NewApplier:  func(ctx context.Context) (mutationApplier, error) { return newGoogleClient(ctx) },
+	Configured:  googleConfigured,
 })
+
+// googleConfigured reports whether anything Google-specific has been set up:
+// a developer token, an OAuth client, or a saved sign-in. Any one of them means
+// the user intends to use Google and wants `ads doctor` to say what is missing;
+// none of them means they haven't started, and a plain `ads doctor` should not
+// report that as a broken setup.
+func googleConfigured() bool {
+	cfg, err := loadGoogleConfig(configPath)
+	if err != nil {
+		// A config file that cannot be read is a problem doctor should report,
+		// not one it should skip over.
+		return true
+	}
+	if cfg.DeveloperToken != "" || cfg.ClientID != "" || cfg.ClientSecret != "" {
+		return true
+	}
+	if tok, err := readStoredToken(googleTokenPolicy.Platform); err == nil && tok != nil {
+		return true
+	}
+	return false
+}

@@ -39,6 +39,16 @@ type Platform struct {
 	// ShowConfig prints the platform's resolved settings for `ads config show`,
 	// with secrets redacted.
 	ShowConfig func(w io.Writer) error
+	// NewApplier builds the client that applies a staged write for this
+	// platform. `ads confirm <token>` uses it to route a token to the API that
+	// staged it; a platform with no write tools may leave it nil.
+	NewApplier func(ctx context.Context) (mutationApplier, error)
+	// Configured reports whether the user has set this platform up at all. It
+	// is what keeps a multi-platform binary usable by someone who only uses one
+	// network: `ads doctor` with no argument skips platforms nobody configured,
+	// instead of reporting a healthy setup as broken. Nil means "always
+	// configured" — the platform is then always checked.
+	Configured func() bool
 	// Doctor checks the platform's setup, printing a line per check to w. It
 	// verifies that credentials resolve and, unless offline, probes the live
 	// API. The caller prints the status line and picks the exit code.
@@ -79,6 +89,13 @@ func lookupPlatform(name string) (*Platform, error) {
 		}
 	}
 	return nil, fmt.Errorf("unknown platform %q — supported: %s", name, strings.Join(platformNames(), ", "))
+}
+
+// configured reports whether the user has set this platform up. A platform
+// that does not answer the question counts as configured, so an omitted hook
+// can never hide a platform from `ads doctor`.
+func (p *Platform) configured() bool {
+	return p.Configured == nil || p.Configured()
 }
 
 // platformNames lists the registered namespaces, for help text and errors.

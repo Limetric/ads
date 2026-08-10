@@ -14,10 +14,14 @@ as a single binary with two front-ends over one shared set of tools:
   (Claude Desktop, Cursor, …).
 
 Every platform gets its own namespace — `ads google campaigns` on the CLI,
-`google_campaigns` over MCP — so a second network slots in beside Google rather
-than fighting it for names. **Google Ads is the platform implemented today.**
-Shared plumbing (`login`, `doctor`, `config`, `confirm`, `audit`, `mcp`) stays
-unnamespaced, with a platform argument where it needs one.
+`google_campaigns` over MCP — so networks slot in beside each other rather than
+fighting for names. **Google Ads and Microsoft Advertising (Bing Ads) are
+implemented today.** Shared plumbing (`login`, `doctor`, `config`, `confirm`,
+`audit`, `mcp`) stays unnamespaced, with a platform argument where it needs one.
+
+You only configure the platforms you use: `ads doctor` skips the ones you
+haven't set up, and `ads mcp` serves the tools it can and says on stderr which
+platform it left out and why.
 
 ## Quick start
 
@@ -136,6 +140,12 @@ Run `ads login google` once first: the refresh token comes from the token store,
 so it does not belong in the host config. Add `"GOADS_TOKEN_STORE": "..."` if the
 host runs somewhere `~/.config/ads` isn't writable.
 
+Add `BING_ADS_DEVELOPER_TOKEN`, `BING_ADS_CLIENT_ID`, and (optionally)
+`BING_ADS_CUSTOMER_ID` / `BING_ADS_ACCOUNT_ID` to serve `bing_…` tools as well,
+after `ads login bing`. A platform whose credentials don't resolve is skipped
+with a warning rather than taking the server down, so configuring one network is
+fine.
+
 ## As a Claude Code skill
 
 The repo bundles a skill (`plugins/ads/skills/ads/SKILL.md`, symlinked at
@@ -161,6 +171,41 @@ codex plugin marketplace add Limetric/goads
 codex plugin add ads@goads
 ```
 
+## Microsoft Advertising (Bing Ads)
+
+Bing works the same way, under its own namespace:
+
+```bash
+ads login bing --client-id <entra-application-id>   # browser sign-in (auth code + PKCE)
+ads config bing set-account 123456789               # default account for later commands
+ads doctor bing                                     # verify it works
+
+ads bing campaigns                    # campaign settings and budgets
+ads bing campaign-performance --format table        # spend, clicks, conversions
+ads bing budget set --campaign-id 1 --daily-budget 30
+```
+
+Sign-in needs a **Microsoft Entra application registration** (a public/native
+client, supporting personal and work accounts) whose redirect URI includes
+`http://localhost:8086`, plus a Microsoft Advertising developer token for
+production. The sandbox needs neither: `BING_ADS_ENVIRONMENT=sandbox` fills in
+Microsoft's universal sandbox developer token for you.
+
+Two differences from Google are worth knowing before you script against it:
+
+- **Metrics are asynchronous.** Microsoft has no query language; every figure
+  comes from the Reporting service, which queues a job. The metric tools wait up
+  to 45 seconds and then return either rows or a job handle:
+  `report queued: job_8f3c` → `ads bing report fetch job_8f3c`. Handles are
+  saved on disk, so a handle from the CLI is fetchable from the MCP server and
+  the other way round.
+- **Money is plain currency, not micros.** `--daily-budget 30` is 30 in the
+  account's currency (`ads bing account-info` reports which).
+
+Microsoft replaces the refresh token on every refresh, so Bing's sign-in cannot
+live in an environment variable at all — the token store has to be writable.
+`ads doctor bing` reports whether it is.
+
 ## Tool coverage
 
 Comprehensive Google Ads campaign management plus first-class App campaign
@@ -179,6 +224,20 @@ is a `ads google …` subcommand and a `google_…` MCP tool; see
   strategies + keyword bids, sitelink/callout/snippet extensions, audiences,
   image/text assets, ad scheduling, Performance Max campaigns, pause/enable/remove,
   and recommendation apply/dismiss.
+
+Microsoft Advertising exposes what Microsoft has — 10 `bing_…` MCP tools /
+`ads bing …` commands:
+
+- **Reads** — `list_accounts`, `account_info`, `campaigns`, `ad_groups`,
+  `keywords` (entity settings, sub-second) and `campaign_performance`,
+  `keyword_performance`, `ad_performance` (metrics, via Reporting), plus
+  `report_fetch` for a queued report.
+- **Writes** — `set_campaign_budget`, through the same preview-then-confirm flow
+  and the same spend cap as Google's.
+
+There is deliberately no `bing_search` or `bing_keyword_ideas`: Microsoft has no
+query language and no v13 analogue, and a tool that only ever answers
+"unsupported" costs an agent a call to discover that.
 
 Write safety: every mutation previews first and applies only on confirm
 (`ads confirm <token>` or re-running with `--confirm`); `ads audit` shows

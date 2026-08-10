@@ -198,11 +198,20 @@ func resolveLoginCreds(cfg *GoogleConfig, credentialsPath string) (clientCreds, 
 // authorization code on a loopback HTTP server. conf.RedirectURL and ln must
 // agree on the port. It returns once the callback arrives, errors, or times out.
 func runLoopbackOAuth(ctx context.Context, conf *oauth2.Config, openFn func(string) error, ln net.Listener) (string, error) {
+	return runLoopbackOAuthWith(ctx, conf, openFn, ln, oauth2.AccessTypeOffline, oauth2.SetAuthURLParam("prompt", "consent"))
+}
+
+// runLoopbackOAuthWith is runLoopbackOAuth with provider-specific authorization
+// parameters — Google's offline access and forced consent, Microsoft's PKCE
+// challenge. Waiting for a browser redirect is identical either way, and it is
+// the part with the edge cases (stray callbacks, state mismatch, timeouts), so
+// there is one implementation of it.
+func runLoopbackOAuthWith(ctx context.Context, conf *oauth2.Config, openFn func(string) error, ln net.Listener, opts ...oauth2.AuthCodeOption) (string, error) {
 	state, err := randomState()
 	if err != nil {
 		return "", err
 	}
-	authURL := conf.AuthCodeURL(state, oauth2.AccessTypeOffline, oauth2.SetAuthURLParam("prompt", "consent"))
+	authURL := conf.AuthCodeURL(state, opts...)
 
 	type result struct {
 		code string

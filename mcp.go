@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/spf13/cobra"
@@ -34,23 +35,29 @@ func runMCP(cmd *cobra.Command, _ []string) error {
 //
 // Keep each platform's tool list in sync with the CLI subcommands it exposes
 // through Platform.Commands.
+// The policy for a platform whose credentials don't resolve is skip-with-
+// warning: it is served without that platform's tools, and the reason goes to
+// stderr (where MCP hosts collect server logs). Failing the whole server was
+// right while Google was the only platform; with a second one it would mean
+// nobody can use Google because they never signed in to Bing.
+//
+// The server still fails when *no* platform registers: an MCP host cannot
+// surface an empty tool list as a setup problem, so that case has to be loud.
 func registerTools(ctx context.Context, server *mcp.Server) error {
+	var registered, skipped []string
 	for _, p := range platforms() {
 		if p.RegisterMCP == nil {
 			continue
 		}
-		// A platform whose credentials don't resolve fails the whole server,
-		// as it did before the platform split. An MCP host has no way to
-		// surface a half-configured server, so a loud failure at startup beats
-		// silently serving a subset of the tools.
-		//
-		// Revisit when a second platform lands: a user configured for only one
-		// network would then be unable to start the server at all. The fix is a
-		// deliberate policy (skip-with-warning, or an explicit platform
-		// allow-list), not an accident of this loop.
 		if err := p.RegisterMCP(ctx, &toolRegistrar{server: server, prefix: p.Name + "_"}); err != nil {
-			return fmt.Errorf("register %s tools: %w", p.Title, err)
+			warnOnce("%s tools are not being served: %v — run `ads doctor %s` to fix, then restart the MCP server.", p.Title, err, p.Name)
+			skipped = append(skipped, p.Name)
+			continue
 		}
+		registered = append(registered, p.Name)
+	}
+	if len(registered) == 0 && len(skipped) > 0 {
+		return fmt.Errorf("no platform could be served — none of %s has working credentials (run `ads doctor`)", strings.Join(skipped, ", "))
 	}
 	return nil
 }

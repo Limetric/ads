@@ -117,6 +117,21 @@ func revalidateBudgetCaps(ops []any, cfg SafetyConfig) error {
 	return nil
 }
 
+// revalidateBudgetAmounts re-checks the daily-budget cap for the amounts a
+// staged write declared (PendingMutation.BudgetAmounts).
+//
+// It is the platform-neutral half of revalidateBudgetCaps: rather than teach
+// this file how every platform spells a budget operation, a staged write states
+// the number it would set and this compares it against the current cap.
+func revalidateBudgetAmounts(amounts []float64, cfg SafetyConfig) error {
+	for _, amount := range amounts {
+		if err := checkBudgetCap(amount, cfg); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // checkBlockedOperation rejects an operation present in the configured block list.
 func checkBlockedOperation(operation string, cfg SafetyConfig) error {
 	for _, b := range cfg.BlockedOperations {
