@@ -27,6 +27,13 @@ func liveClient(t *testing.T) *Client {
 	if cfg.isTest() {
 		t.Skip("GOOGLE_ADS_API_BASE_URL points away from production; skipping live test")
 	}
+	// The refresh token comes from the token store, so resolve before deciding
+	// whether credentials are configured — otherwise a store-only setup (the
+	// recommended one) reports "not configured" and silently skips every live
+	// test it was supposed to run.
+	if err := cfg.resolveRefreshToken(); err != nil {
+		t.Skipf("token store unavailable: %v", err)
+	}
 	if err := cfg.validate(); err != nil {
 		t.Skipf("live credentials not configured: %v", err)
 	}

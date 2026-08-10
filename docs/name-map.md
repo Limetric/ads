@@ -163,17 +163,23 @@ Unnamespaced, but platform-aware.
 
 ## Environment and config keys
 
-Unchanged in this issue. `GOOGLE_ADS_*` stays as-is and the TOML keys keep their
-current names — credential storage rework is tracked separately and has its own
-deprecation path. What changes is *where they are read*: a Google provider owns
-them instead of a flat global `Config`.
+`GOOGLE_ADS_*` keeps its names and the TOML keys keep theirs. What changed in
+the platform split is *where they are read*: a Google provider owns them instead
+of a flat global `Config`.
+
+One key has since moved out of this table entirely. `GOOGLE_ADS_REFRESH_TOKEN`
+and the `refresh_token` TOML key are **deprecated** (issue #37): the refresh
+token lives in the per-platform token store, and both are accepted only as a
+one-time seed into it, with a warning, through the 0.x line. `GOADS_TOKEN_STORE`
+is platform-neutral and overrides the store directory.
 
 | Key | Owner after the split |
 | --- | --- |
 | `GOOGLE_ADS_DEVELOPER_TOKEN` | Google provider |
 | `GOOGLE_ADS_CLIENT_ID` | Google provider |
 | `GOOGLE_ADS_CLIENT_SECRET` | Google provider |
-| `GOOGLE_ADS_REFRESH_TOKEN` | Google provider |
+| `GOOGLE_ADS_REFRESH_TOKEN` | Google provider (deprecated — seeds the token store) |
+| `GOADS_TOKEN_STORE` | Shared (token store directory override) |
 | `GOOGLE_ADS_LOGIN_CUSTOMER_ID` | Google provider |
 | `GOOGLE_ADS_CUSTOMER_ID` | Google provider |
 | `GOOGLE_ADS_API_BASE_URL` | Google provider (per-platform base-URL override; `httptest` hooks in here) |

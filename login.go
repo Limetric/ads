@@ -109,14 +109,53 @@ func mergeConfigValues(path string, values map[string]string) error {
 	return nil
 }
 
-// writeOAuthToConfig merges the OAuth client id/secret and refresh token into the
-// TOML config at path, preserving any other keys already present.
-func writeOAuthToConfig(path string, c clientCreds, refreshToken string) error {
-	return mergeConfigValues(path, map[string]string{
+// saveGoogleCredentials persists what a sign-in produced: the OAuth client
+// id/secret into the TOML config at path (preserving any other keys), and the
+// refresh token into the token store.
+//
+// They are split because they are different kinds of thing. The client identity
+// is stable configuration; the refresh token is a live credential that other
+// platforms replace on every refresh, so it belongs somewhere ads owns and can
+// rewrite. Any refresh_token left in the TOML from an older version is removed
+// here, so the credential ends up with exactly one home.
+//
+// A failed sign-in must not destroy a working one. A refresh token is only
+// usable alongside the OAuth client that minted it, so committing one half
+// without the other would replace a working pair with a broken one. The two
+// writes therefore land together or not at all: the store is checked up front,
+// the config is restored if the token write still fails, and the deprecated
+// refresh_token key is not dropped until the new token is safely saved.
+func saveGoogleCredentials(path string, c clientCreds, refreshToken string) error {
+	if err := requireWritableStore(googleTokenPolicy.Platform); err != nil {
+		return fmt.Errorf("signed in, but the refresh token cannot be saved: %w — make that path writable, or set %s to a writable directory and sign in again", err, tokenStoreEnv)
+	}
+	restoreConfig, err := snapshotFile(path)
+	if err != nil {
+		return fmt.Errorf("read config %q: %w", path, err)
+	}
+	if err := mergeConfigValues(path, map[string]string{
 		"client_id":     c.clientID,
 		"client_secret": c.clientSecret,
-		"refresh_token": refreshToken,
-	})
+	}); err != nil {
+		return err
+	}
+	if err := writeStoredToken(googleTokenPolicy.Platform, &storedToken{
+		RefreshToken: refreshToken,
+		UpdatedAt:    time.Now().UTC(),
+		Source:       googleTokenPolicy.loginCommand(),
+		ClientID:     c.clientID,
+	}); err != nil {
+		// The browser dance already succeeded, so say what was lost and why:
+		// without this, the sign-in has to be repeated for a reason that has
+		// nothing to do with signing in.
+		saved := fmt.Errorf("signed in, but the refresh token could not be saved: %w — make that path writable, or set %s to a writable directory and sign in again", err, tokenStoreEnv)
+		if rerr := restoreConfig(); rerr != nil {
+			return fmt.Errorf("%w (and %q could not be rolled back to its previous contents: %v — its client_id/client_secret no longer match the saved refresh token)", saved, path, rerr)
+		}
+		return saved
+	}
+	// Only now is the old copy redundant.
+	return deleteConfigKey(path, "refresh_token")
 }
 
 // configWriteTarget returns the file `ads login google` should write to: the explicit
@@ -404,17 +443,32 @@ var googleLoginCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if err := writeOAuthToConfig(target, creds, refreshToken); err != nil {
+		if err := saveGoogleCredentials(target, creds, refreshToken); err != nil {
 			return err
 		}
-		fmt.Fprintf(out, "✓ Wrote credentials to %s\n\n", target)
-		fmt.Fprintln(out, "For CI / MCP host config, set:")
-		fmt.Fprintf(out, "  export GOOGLE_ADS_CLIENT_ID=%q\n", creds.clientID)
-		fmt.Fprintf(out, "  export GOOGLE_ADS_CLIENT_SECRET=%q\n", creds.clientSecret)
-		fmt.Fprintf(out, "  export GOOGLE_ADS_REFRESH_TOKEN=%q\n\n", refreshToken)
+		fmt.Fprintf(out, "✓ Wrote credentials to %s\n", target)
+		printGoogleHandoff(out, creds)
 		fmt.Fprintln(out, "Run `ads doctor google` to verify. (developer token still required.)")
 		return nil
 	},
+}
+
+// printGoogleHandoff tells the user how to carry this sign-in to CI or an MCP
+// host. It deliberately does not print the refresh token: pasting one into an
+// environment variable is the pattern the token store exists to end, and it
+// stops working outright on a platform that rotates its refresh tokens.
+func printGoogleHandoff(out io.Writer, c clientCreds) {
+	fmt.Fprintln(out, "\nFor CI / MCP hosts, set:")
+	fmt.Fprintln(out, "  export GOOGLE_ADS_DEVELOPER_TOKEN=\"…\"")
+	fmt.Fprintf(out, "  export GOOGLE_ADS_CLIENT_ID=%q\n", c.clientID)
+	fmt.Fprintf(out, "  export GOOGLE_ADS_CLIENT_SECRET=%q\n", c.clientSecret)
+	if path, err := tokenStorePath(googleTokenPolicy.Platform); err == nil {
+		fmt.Fprintln(out, "\nThe refresh token lives in the token store:")
+		fmt.Fprintf(out, "  %s\n", path)
+		fmt.Fprintln(out, "Mount or copy it, and point ads at it with:")
+		fmt.Fprintf(out, "  export %s=\"/path/to/tokens\"\n", tokenStoreEnv)
+	}
+	fmt.Fprintln(out)
 }
 
 func init() {

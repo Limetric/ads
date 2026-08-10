@@ -8,8 +8,9 @@ import (
 	"time"
 )
 
-// useTempState points the confirm-token store and audit log at a temp dir so
-// the test never touches the real user config directory.
+// useTempState points the confirm-token store, the audit log, and the OAuth
+// token store at a temp dir so the test never touches the real user config
+// directory.
 func useTempState(t *testing.T) {
 	t.Helper()
 	tmp := t.TempDir()
@@ -17,6 +18,19 @@ func useTempState(t *testing.T) {
 	t.Setenv("HOME", tmp)                  // darwin + Unix fallback
 	t.Setenv("XDG_CONFIG_HOME", configDir) // Unix
 	t.Setenv("APPDATA", configDir)         // Windows
+	// GOADS_TOKEN_STORE overrides the config dir outright, so a developer who
+	// exports it would otherwise have the suite write fixture refresh tokens
+	// over their real sign-in.
+	t.Setenv(tokenStoreEnv, "")
+}
+
+// unsetConfigDirEnv leaves the process with no locatable user config directory,
+// the shape of a container that runs without HOME.
+func unsetConfigDirEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("HOME", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("APPDATA", "")
 }
 
 func TestConfirmFlow_RoundTrip(t *testing.T) {
@@ -113,9 +127,7 @@ func TestConsumeMutation_PathTraversalNeverTouchesFiles(t *testing.T) {
 func TestStageMutation_FailsWithoutStateDir(t *testing.T) {
 	// No usable config dir → staging must fail loudly instead of handing out
 	// a token that can never be confirmed (issue #6).
-	t.Setenv("HOME", "")
-	t.Setenv("XDG_CONFIG_HOME", "")
-	t.Setenv("APPDATA", "")
+	unsetConfigDirEnv(t)
 	if _, err := stageMutation("t", "1", "s", nil); err == nil {
 		t.Fatal("expected staging to fail without a state dir")
 	}

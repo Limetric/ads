@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 	"github.com/spf13/cobra"
@@ -92,6 +94,9 @@ func writableConfigPath(explicit string) (string, error) {
 
 // upsertConfigKey sets one key in a TOML config file, preserving all other
 // keys. The file is created if missing and rewritten 0600 (it holds secrets).
+// Comments do not survive — the file is re-encoded from its parsed form, which
+// the settings commands document, and which is acceptable because the user
+// asked for this write explicitly.
 func upsertConfigKey(path, key, value string) error {
 	settings := map[string]any{}
 	data, err := os.ReadFile(path)
@@ -100,7 +105,9 @@ func upsertConfigKey(path, key, value string) error {
 		if err := toml.Unmarshal(data, &settings); err != nil {
 			return fmt.Errorf("parse existing config %q: %w", path, err)
 		}
-	case !os.IsNotExist(err):
+	case os.IsNotExist(err):
+		// Fall through with an empty map: the file is about to be created.
+	default:
 		return fmt.Errorf("read config %q: %w", path, err)
 	}
 	settings[key] = value
@@ -110,26 +117,92 @@ func upsertConfigKey(path, key, value string) error {
 	}
 	// Write-then-rename so an interrupted write can never truncate a config
 	// file that holds credentials.
-	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")
-	if err != nil {
-		return fmt.Errorf("write config %q: %w", path, err)
-	}
-	defer os.Remove(tmp.Name()) // no-op after a successful rename
-	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
-		return fmt.Errorf("write config %q: %w", path, err)
-	}
-	if _, err := tmp.Write(buf.Bytes()); err != nil {
-		tmp.Close()
-		return fmt.Errorf("write config %q: %w", path, err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("write config %q: %w", path, err)
-	}
-	if err := os.Rename(tmp.Name(), path); err != nil {
+	if err := writeFileAtomic(path, buf.Bytes(), 0o600); err != nil {
 		return fmt.Errorf("write config %q: %w", path, err)
 	}
 	return nil
+}
+
+// deleteConfigKey removes one top-level key from a TOML config file, leaving
+// the rest of the file byte-for-byte intact — comments and formatting included.
+// A missing file or a key that isn't there is not an error: both mean the key
+// is already gone, which is all the caller wanted.
+//
+// It edits lines instead of re-encoding, unlike upsertConfigKey, because this
+// one runs *automatically* — on the first command after an upgrade, to retire a
+// deprecated credential into the token store. Re-encoding would silently strip
+// every comment from a file the user never asked us to touch.
+//
+// The edit is committed only when the result still parses and differs from the
+// original by exactly that one key. Anything else — a multi-line value, a
+// layout the line scan misreads — leaves the file alone and reports the
+// failure, which callers treat as "warn and move on" rather than as a reason to
+// fail the command.
+func deleteConfigKey(path, key string) error {
+	if path == "" {
+		return nil
+	}
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read config %q: %w", path, err)
+	}
+	before := map[string]any{}
+	if err := toml.Unmarshal(data, &before); err != nil {
+		return fmt.Errorf("parse existing config %q: %w", path, err)
+	}
+	if _, ok := before[key]; !ok {
+		return nil
+	}
+
+	edited := dropTopLevelKeyLines(data, key)
+	after := map[string]any{}
+	if err := toml.Unmarshal(edited, &after); err != nil {
+		return fmt.Errorf("removing %s from %q would not leave valid TOML: %w", key, path, err)
+	}
+	delete(before, key)
+	if !reflect.DeepEqual(before, after) {
+		return fmt.Errorf("removing %s from %q would have changed other settings", key, path)
+	}
+	if err := writeFileAtomic(path, edited, 0o600); err != nil {
+		return fmt.Errorf("write config %q: %w", path, err)
+	}
+	return nil
+}
+
+// dropTopLevelKeyLines removes the `key = …` assignments that sit above the
+// first table header, which is where a top-level key lives. Everything else,
+// including a same-named key inside a table, is left untouched. The caller
+// re-parses the result, so a wrong guess here is caught rather than committed.
+func dropTopLevelKeyLines(data []byte, key string) []byte {
+	lines := strings.Split(string(data), "\n")
+	kept := make([]string, 0, len(lines))
+	inTable := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "[") {
+			inTable = true
+		}
+		if !inTable && isAssignmentTo(trimmed, key) {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return []byte(strings.Join(kept, "\n"))
+}
+
+// isAssignmentTo reports whether a trimmed line assigns to key, in any of the
+// three spellings TOML allows for a bare key.
+func isAssignmentTo(line, key string) bool {
+	for _, form := range []string{key, `"` + key + `"`, `'` + key + `'`} {
+		rest, ok := strings.CutPrefix(line, form)
+		if ok && strings.HasPrefix(strings.TrimSpace(rest), "=") {
+			return true
+		}
+	}
+	return false
 }
 
 // redactSecret renders a credential for display without exposing it; the last

@@ -279,7 +279,11 @@ func wizardGatherRefreshToken(ctx context.Context, p prompter, out io.Writer, cr
 	if creds.kind == "authorized_user" && creds.refreshToken != "" {
 		return creds.refreshToken, nil
 	}
-	if cfg.RefreshToken != "" && creds.kind == "config" {
+	// Reuse is only offered when the saved sign-in belongs to this OAuth client.
+	// Otherwise the wizard would stage a token that cannot authenticate — and
+	// `ads login google` is what the mismatch warning tells the user to run, so
+	// it has to be the thing that fixes it.
+	if cfg.RefreshToken != "" && creds.kind == "config" && googleSavedSignInUsableWith(creds.clientID) {
 		choice, err := p.line("   Reuse your existing sign-in, or sign in again? [reuse/new]: ")
 		if err != nil {
 			return "", err
@@ -334,6 +338,12 @@ func runLoginWizard(ctx context.Context, out io.Writer, p prompter, cfg *GoogleC
 	}
 
 	fmt.Fprintln(out, "\nStep 3/5 · Sign in (browser)")
+	// Any existing sign-in lives in the token store, so consult it before
+	// offering to reuse one. This is also where a user upgrading from a
+	// config.toml refresh_token gets migrated.
+	if err := cfg.resolveRefreshToken(); err != nil {
+		return err
+	}
 	refreshToken, err := wizardGatherRefreshToken(ctx, p, out, creds, cfg, openFn, port)
 	if err != nil {
 		return err
@@ -356,10 +366,10 @@ func runLoginWizard(ctx context.Context, out io.Writer, p prompter, cfg *GoogleC
 		return err
 	}
 	fmt.Fprintf(out, "\nSaving to %s …\n", target)
+	if err := saveGoogleCredentials(target, creds, refreshToken); err != nil {
+		return err
+	}
 	if err := mergeConfigValues(target, map[string]string{
-		"client_id":         creds.clientID,
-		"client_secret":     creds.clientSecret,
-		"refresh_token":     refreshToken,
 		"developer_token":   devToken,
 		"login_customer_id": loginCID,
 	}); err != nil {
@@ -373,7 +383,11 @@ func runLoginWizard(ctx context.Context, out io.Writer, p prompter, cfg *GoogleC
 	final := *cfg
 	final.ClientID = creds.clientID
 	final.ClientSecret = creds.clientSecret
+	// The token was just written to the store, so mark it resolved: re-reading
+	// the store here would only re-derive the same value, and would replay the
+	// deprecation notices in the middle of the wizard's own output.
 	final.RefreshToken = refreshToken
+	final.refreshTokenResolved = true
 	final.DeveloperToken = devToken
 	final.LoginCustomerID = loginCID
 	fmt.Fprint(out, "Verifying… ")

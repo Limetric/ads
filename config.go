@@ -20,21 +20,25 @@ import (
 // variables. Credentials are most commonly supplied via the environment so the
 // MCP host config and CI never need a file on disk.
 
-// decodeConfigFile decodes the TOML config selected by path into dst. An empty
-// path means "use the default path if it exists"; when no file is found dst is
-// left untouched, which is the env-only case.
-func decodeConfigFile(path string, dst any) error {
+// decodeConfigFile decodes the TOML config selected by path into dst and
+// returns the file it read. An empty path means "use the default path if it
+// exists"; when no file is found dst is left untouched and the returned path is
+// empty, which is the env-only case.
+//
+// The path comes back because a deprecated key has to be retired from the exact
+// file it was read out of, not from wherever the default resolves today.
+func decodeConfigFile(path string, dst any) (string, error) {
 	resolved, err := resolveConfigPath(path)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if resolved == "" {
-		return nil
+		return "", nil
 	}
 	if _, err := toml.DecodeFile(resolved, dst); err != nil {
-		return fmt.Errorf("read config %q: %w", resolved, err)
+		return "", fmt.Errorf("read config %q: %w", resolved, err)
 	}
-	return nil
+	return resolved, nil
 }
 
 // overlayEnv copies each non-empty environment variable over the string it maps

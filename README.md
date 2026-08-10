@@ -45,13 +45,41 @@ go build -o build/ads .
 export GOOGLE_ADS_DEVELOPER_TOKEN=...
 export GOOGLE_ADS_CLIENT_ID=...
 export GOOGLE_ADS_CLIENT_SECRET=...
-export GOOGLE_ADS_REFRESH_TOKEN=...
 export GOOGLE_ADS_LOGIN_CUSTOMER_ID=123-456-7890   # optional manager account
+
+build/ads login google --no-input   # sign in; saves the refresh token to the token store
 
 build/ads doctor              # verify credentials resolve (every platform)
 build/ads google accounts     # list accessible accounts
 build/ads google search --customer-id 123-456-7890 \
   --query 'SELECT campaign.id, campaign.name FROM campaign LIMIT 10' | jq
+```
+
+### Where the refresh token lives
+
+`ads login` saves the refresh token to a per-platform **token store** — one
+`0600` file per platform under `~/.config/ads/state/tokens/` — and not to
+`config.toml` or an environment variable. The store is writable, which is what
+lets ads keep working on platforms that issue a *new* refresh token on every
+refresh and invalidate the old one; a token pinned in an env var would work
+exactly once there.
+
+```bash
+ads doctor google        # where the store is, whether it's writable, how old the sign-in is
+export GOADS_TOKEN_STORE=/path/to/tokens   # containers and CI: mount a writable volume here
+```
+
+`GOOGLE_ADS_REFRESH_TOKEN` (and `refresh_token` in `config.toml`) still work
+through the 0.x line: the value is copied into the store the first time it is
+used, with a warning, and ignored from then on. Existing setups need no change.
+
+The store holds one sign-in per platform, so two `--config` files that sign in
+as different Google users need a store each — otherwise the second one picks up
+the first one's sign-in:
+
+```bash
+GOADS_TOKEN_STORE=~/.ads/work     ads --config ~/.ads/work.toml google accounts
+GOADS_TOKEN_STORE=~/.ads/client   ads --config ~/.ads/client.toml google accounts
 ```
 
 Work with one account most of the time? Set a default once and drop
@@ -97,13 +125,16 @@ prefix — `google_search`, `google_campaigns`, `google_set_campaign_budget`, �
         "GOOGLE_ADS_DEVELOPER_TOKEN": "...",
         "GOOGLE_ADS_CLIENT_ID": "...",
         "GOOGLE_ADS_CLIENT_SECRET": "...",
-        "GOOGLE_ADS_REFRESH_TOKEN": "...",
         "GOOGLE_ADS_LOGIN_CUSTOMER_ID": "..."
       }
     }
   }
 }
 ```
+
+Run `ads login google` once first: the refresh token comes from the token store,
+so it does not belong in the host config. Add `"GOADS_TOKEN_STORE": "..."` if the
+host runs somewhere `~/.config/ads` isn't writable.
 
 ## As a Claude Code skill
 
