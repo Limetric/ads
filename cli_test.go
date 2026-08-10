@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // runCLI executes the root command with args, capturing combined output. It
@@ -165,6 +166,7 @@ func TestCLI_ConfigSetCustomer(t *testing.T) {
 func TestCLI_ConfigShow(t *testing.T) {
 	useTempState(t)
 	clearAdsEnv(t)
+	storeDir := useTokenStore(t)
 	t.Setenv("GOOGLE_ADS_REFRESH_TOKEN", "super-secret-refresh-9876")
 	t.Setenv("GOOGLE_ADS_CUSTOMER_ID", "123-456-7890")
 
@@ -176,7 +178,8 @@ func TestCLI_ConfigShow(t *testing.T) {
 		t.Errorf("config show leaked a credential:\n%s", out)
 	}
 	for _, want := range []string{
-		"refresh token:        set (…9876)",
+		"refresh token:        set (…9876) — from GOOGLE_ADS_REFRESH_TOKEN (deprecated",
+		"token store:          " + filepath.Join(storeDir, "google.json"),
 		"developer token:      (not set)",
 		"default customer id:  1234567890",
 		"config file:          (none — environment only)",
@@ -184,6 +187,36 @@ func TestCLI_ConfigShow(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("config show missing %q:\n%s", want, out)
 		}
+	}
+	// Reporting must not migrate the seed — that is a sign-in-path side effect,
+	// and `config show` is meant to describe the setup, not change it.
+	if _, err := os.Stat(filepath.Join(storeDir, "google.json")); !os.IsNotExist(err) {
+		t.Errorf("config show wrote to the token store (stat err = %v)", err)
+	}
+}
+
+func TestCLI_ConfigShowReportsASavedSignIn(t *testing.T) {
+	useTempState(t)
+	clearAdsEnv(t)
+	useTokenStore(t)
+	err := writeStoredToken("google", &storedToken{
+		RefreshToken: "stored-refresh-4321",
+		UpdatedAt:    time.Now().UTC().Add(-2 * time.Hour),
+		Source:       "ads login google",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out, cliErr := runCLI(t, "config", "show")
+	if cliErr != nil {
+		t.Fatalf("config show: %v\noutput: %s", cliErr, out)
+	}
+	if strings.Contains(out, "stored-refresh-4321") {
+		t.Errorf("config show leaked the stored credential:\n%s", out)
+	}
+	if want := "refresh token:        set (…4321) — saved 2 hours ago via ads login google"; !strings.Contains(out, want) {
+		t.Errorf("config show missing %q:\n%s", want, out)
 	}
 }
 
@@ -311,15 +344,93 @@ func TestCLI_ReadCommandFormats(t *testing.T) {
 func TestCLI_DoctorReportsMissingCredentials(t *testing.T) {
 	useTempState(t)
 	clearAdsEnv(t) // production base URL, no creds → NOT READY
+	storeDir := useTokenStore(t)
+	captureWarnings(t)
 
 	out, err := runCLI(t, "doctor")
 	if err == nil {
 		t.Errorf("doctor should fail when credentials are missing")
 	}
-	for _, want := range []string{"developer token:    MISSING", "login customer id:  (none)", "default customer:   (none)", "NOT READY"} {
+	for _, want := range []string{
+		"developer token:    MISSING",
+		"token store:        " + filepath.Join(storeDir, "google.json"),
+		"saved sign-in:      none saved — run `ads login google`",
+		"login customer id:  (none)",
+		"default customer:   (none)",
+		"NOT READY",
+	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("doctor output missing %q:\n%s", want, out)
 		}
+	}
+}
+
+func TestCLI_DoctorReportsTheSavedSignIn(t *testing.T) {
+	useTempState(t)
+	clearAdsEnv(t)
+	storeDir := useTokenStore(t)
+	captureWarnings(t)
+	err := writeStoredToken("google", &storedToken{
+		RefreshToken: "rt",
+		UpdatedAt:    time.Now().UTC().Add(-3 * 24 * time.Hour),
+		Source:       "ads login google",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out, _ := runCLI(t, "doctor", "google", "--offline")
+	for _, want := range []string{
+		"token store:        " + filepath.Join(storeDir, "google.json"),
+		"saved sign-in:      saved 3 days ago via ads login google",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("doctor output missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "rt") && strings.Contains(out, "refresh token:      rt") {
+		t.Errorf("doctor leaked the refresh token:\n%s", out)
+	}
+}
+
+func TestCLI_DoctorReportsAnUnsavedFallbackSignIn(t *testing.T) {
+	useTempState(t)
+	clearAdsEnv(t)
+	storeDir := readOnlyDir(t)
+	t.Setenv(tokenStoreEnv, storeDir)
+	t.Setenv("GOOGLE_ADS_DEVELOPER_TOKEN", "devtok")
+	t.Setenv("GOOGLE_ADS_CLIENT_ID", "cid")
+	t.Setenv("GOOGLE_ADS_CLIENT_SECRET", "csec")
+	t.Setenv("GOOGLE_ADS_REFRESH_TOKEN", "rt-env")
+	captureWarnings(t)
+
+	// A read-only container with env credentials is a supported setup: the
+	// seed cannot be saved but still works, so the report must not claim there
+	// is no sign-in and then call the setup ready.
+	out, err := runCLI(t, "doctor", "google", "--offline")
+	if err != nil {
+		t.Fatalf("an unsaved fallback should still be ready: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "none saved") {
+		t.Errorf("doctor called a working setup unsigned-in:\n%s", out)
+	}
+	for _, want := range []string{"not saved — using GOOGLE_ADS_REFRESH_TOKEN", "status: ready"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("doctor output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestCLI_DoctorReportsAnUnwritableStore(t *testing.T) {
+	useTempState(t)
+	clearAdsEnv(t)
+	storeDir := readOnlyDir(t)
+	t.Setenv(tokenStoreEnv, storeDir)
+	captureWarnings(t)
+
+	out, _ := runCLI(t, "doctor", "google", "--offline")
+	if !strings.Contains(out, "NOT WRITABLE") || !strings.Contains(out, storeDir) {
+		t.Errorf("doctor should report an unwritable store and name it:\n%s", out)
 	}
 }
 

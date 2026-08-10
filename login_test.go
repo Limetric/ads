@@ -41,8 +41,12 @@ func TestCLI_LoginAuthorizedUser(t *testing.T) {
 	if err != nil {
 		t.Fatalf("login failed: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "Wrote credentials") || !strings.Contains(out, "GOOGLE_ADS_REFRESH_TOKEN") {
+	if !strings.Contains(out, "Wrote credentials") || !strings.Contains(out, tokenStoreEnv) {
 		t.Errorf("unexpected output:\n%s", out)
+	}
+	// The refresh token must not be handed out as an env var any more.
+	if strings.Contains(out, "GOOGLE_ADS_REFRESH_TOKEN") || strings.Contains(out, "rtok") {
+		t.Errorf("login should not print the refresh token or its deprecated env var:\n%s", out)
 	}
 
 	var cfg GoogleConfig
@@ -52,8 +56,18 @@ func TestCLI_LoginAuthorizedUser(t *testing.T) {
 	if cfg.DeveloperToken != "pre" {
 		t.Errorf("existing developer_token not preserved: %+v", cfg)
 	}
-	if cfg.ClientID != "cid" || cfg.RefreshToken != "rtok" {
-		t.Errorf("oauth fields not written: %+v", cfg)
+	if cfg.ClientID != "cid" {
+		t.Errorf("oauth client not written: %+v", cfg)
+	}
+	if cfg.RefreshToken != "" {
+		t.Errorf("refresh_token must not be written to the config file: %+v", cfg)
+	}
+	stored, err := readStoredToken("google")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored == nil || stored.RefreshToken != "rtok" {
+		t.Errorf("refresh token not saved to the store: %+v", stored)
 	}
 }
 
@@ -77,8 +91,15 @@ func TestCLI_LoginAuthorizedUser_FreshConfigPath(t *testing.T) {
 	if _, err := toml.DecodeFile(cfgPath, &cfg); err != nil {
 		t.Fatalf("config not created at explicit --config path: %v", err)
 	}
-	if cfg.ClientID != "cid" || cfg.RefreshToken != "rtok" {
+	if cfg.ClientID != "cid" {
 		t.Errorf("creds not written: %+v", cfg)
+	}
+	stored, err := readStoredToken("google")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored == nil || stored.RefreshToken != "rtok" {
+		t.Errorf("refresh token not saved to the store: %+v", stored)
 	}
 }
 
@@ -176,13 +197,15 @@ func writeFileHelper(path, content string) error {
 	return os.WriteFile(path, []byte(content), 0o600)
 }
 
-func TestWriteOAuthToConfig_PreservesExisting(t *testing.T) {
+func TestSaveGoogleCredentials_PreservesExistingAndRetiresRefreshToken(t *testing.T) {
+	useTempState(t) // the refresh token goes to the store, not the real one
 	dir := t.TempDir()
 	path := dir + "/config.toml"
-	if err := writeFileHelper(path, "developer_token = \"devtok\"\nlogin_customer_id = \"123\"\n"); err != nil {
+	// An older version's file: it still carries refresh_token.
+	if err := writeFileHelper(path, "developer_token = \"devtok\"\nlogin_customer_id = \"123\"\nrefresh_token = \"stale\"\n"); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeOAuthToConfig(path, clientCreds{clientID: "cid", clientSecret: "csec"}, "rtok"); err != nil {
+	if err := saveGoogleCredentials(path, clientCreds{clientID: "cid", clientSecret: "csec"}, "rtok"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -193,9 +216,24 @@ func TestWriteOAuthToConfig_PreservesExisting(t *testing.T) {
 	if cfg.DeveloperToken != "devtok" || cfg.LoginCustomerID != "123" {
 		t.Errorf("existing fields not preserved: %+v", cfg)
 	}
-	if cfg.ClientID != "cid" || cfg.ClientSecret != "csec" || cfg.RefreshToken != "rtok" {
-		t.Errorf("oauth fields not written: %+v", cfg)
+	if cfg.ClientID != "cid" || cfg.ClientSecret != "csec" {
+		t.Errorf("oauth client not written: %+v", cfg)
 	}
+	if cfg.RefreshToken != "" {
+		t.Errorf("refresh_token should be retired from the config file, got %q", cfg.RefreshToken)
+	}
+
+	stored, err := readStoredToken("google")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored == nil || stored.RefreshToken != "rtok" {
+		t.Errorf("refresh token not saved to the store: %+v", stored)
+	}
+	if stored.Source != "ads login google" {
+		t.Errorf("stored source = %q, want the login command", stored.Source)
+	}
+
 	fi, err := os.Stat(path)
 	if err != nil {
 		t.Fatal(err)
@@ -205,18 +243,26 @@ func TestWriteOAuthToConfig_PreservesExisting(t *testing.T) {
 	}
 }
 
-func TestWriteOAuthToConfig_FreshFile(t *testing.T) {
+func TestSaveGoogleCredentials_FreshFile(t *testing.T) {
+	useTempState(t)
 	dir := t.TempDir()
 	path := dir + "/sub/config.toml" // dir does not exist yet
-	if err := writeOAuthToConfig(path, clientCreds{clientID: "cid", clientSecret: "csec"}, "rtok"); err != nil {
+	if err := saveGoogleCredentials(path, clientCreds{clientID: "cid", clientSecret: "csec"}, "rtok"); err != nil {
 		t.Fatal(err)
 	}
 	var cfg GoogleConfig
 	if _, err := toml.DecodeFile(path, &cfg); err != nil {
 		t.Fatal(err)
 	}
-	if cfg.ClientID != "cid" || cfg.RefreshToken != "rtok" {
+	if cfg.ClientID != "cid" {
 		t.Errorf("got %+v", cfg)
+	}
+	stored, err := readStoredToken("google")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored == nil || stored.RefreshToken != "rtok" {
+		t.Errorf("refresh token not saved to the store: %+v", stored)
 	}
 	fi, err := os.Stat(path)
 	if err != nil {

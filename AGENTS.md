@@ -62,6 +62,8 @@ Core (platform-neutral):
 - `platform.go` — the `Platform` struct + registry; the `login` parent command.
 - `config.go` / `config_paths.go` — TOML loading, env overlay, path resolution.
 - `auth.go` — OAuth2 token source, driven by a platform's `oauthClient`.
+- `token_store.go` — per-platform refresh-token store, rotation write-back, and
+  the one-time migration of deprecated env/TOML refresh tokens.
 - `doctor.go` — `doctor` command, verdict classification, exit codes.
 - `config_command.go` — `config path` / `config show` and the TOML writers.
 - `mcp.go` — `ads mcp`; iterates platforms and namespaces their tools.
@@ -89,6 +91,10 @@ Google provider:
   applies the platform prefix. Never hand-write `google_` into a tool name.
 - Write/mutating tools MUST go through `safety.go`: return a preview + confirm
   token first, execute only on `--confirm <token>`. Never mutate on the first call.
+- Refresh tokens live in the token store (`token_store.go`), never in config
+  TOML or an env var. A platform supplies a `tokenPolicy` saying whether its
+  refresh token rotates; everything else — persistence, migration of deprecated
+  seeds, `invalid_grant` handling — is shared.
 - Errors: wrap with `%w`, and make messages actionable (tell the user the fix).
 - Tests are table-driven and offline — use `net/http/httptest` to fake the Ads API
   (set `GOOGLE_ADS_API_BASE_URL` to the test server). `//go:build integration` for live tests.

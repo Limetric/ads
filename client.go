@@ -36,8 +36,13 @@ type Client struct {
 	tokens oauth2.TokenSource
 }
 
-// NewClient builds a Client from config, validating credentials first.
+// NewClient builds a Client from config, resolving the saved sign-in and
+// validating credentials first. Resolution comes first because it is what
+// decides whether there is a refresh token at all.
 func NewClient(ctx context.Context, cfg *GoogleConfig) (*Client, error) {
+	if err := cfg.resolveRefreshToken(); err != nil {
+		return nil, err
+	}
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}

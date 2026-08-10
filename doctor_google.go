@@ -7,6 +7,26 @@ import (
 	"strings"
 )
 
+// googleSignInReport describes the sign-in that is actually in effect, for a
+// report printed *after* resolution.
+//
+// Normally that is the one in the store. But when the store cannot be written,
+// resolution deliberately falls back to a deprecated environment or config-file
+// value and the setup still works — a supported case for read-only containers.
+// Describing only the store would then print "none saved" directly above a
+// "ready" verdict, which reads as a bug in ads rather than a report about the
+// user's setup.
+func googleSignInReport(cfg *GoogleConfig, store tokenStoreStatus) string {
+	if store.Token == nil && store.ReadErr == nil && cfg.RefreshToken != "" {
+		origin := "a deprecated source"
+		if seeds := presentSeeds(cfg.refreshTokenSeeds()); len(seeds) > 0 {
+			origin = seeds[0].Origin
+		}
+		return fmt.Sprintf("not saved — using %s for this run (deprecated; the token store could not be written)", origin)
+	}
+	return store.describe(googleTokenPolicy)
+}
+
 // googleDoctor is the Google platform's Platform.Doctor hook: it prints the
 // resolved credential summary, then (unless offline) probes the live API.
 func googleDoctor(ctx context.Context, out io.Writer, offline bool) (liveResult, error) {
@@ -14,11 +34,19 @@ func googleDoctor(ctx context.Context, out io.Writer, offline bool) (liveResult,
 	if err != nil {
 		return liveUnconfigured, err
 	}
+	// Resolve before reporting so what doctor prints is what a real command
+	// would use — including migrating a deprecated seed, which is a setup step
+	// the user should see happen here rather than on their next query.
+	if err := cfg.resolveRefreshToken(); err != nil {
+		return liveUnconfigured, err
+	}
+	store := describeTokenStore(googleTokenPolicy.Platform)
 	fmt.Fprintf(out, "base URL:           %s\n", cfg.BaseURL)
 	fmt.Fprintf(out, "developer token:    %s\n", present(cfg.DeveloperToken))
 	fmt.Fprintf(out, "client id:          %s\n", present(cfg.ClientID))
 	fmt.Fprintf(out, "client secret:      %s\n", present(cfg.ClientSecret))
-	fmt.Fprintf(out, "refresh token:      %s\n", present(cfg.RefreshToken))
+	fmt.Fprintf(out, "token store:        %s\n", store.location())
+	fmt.Fprintf(out, "saved sign-in:      %s\n", googleSignInReport(cfg, store))
 	fmt.Fprintf(out, "login customer id:  %s\n", orNone(cfg.LoginCustomerID))
 	fmt.Fprintf(out, "default customer:   %s\n", orNone(cfg.DefaultCustomerID))
 	if err := cfg.validate(); err != nil {

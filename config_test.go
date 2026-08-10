@@ -162,7 +162,10 @@ func TestConfig_Validate(t *testing.T) {
 	}
 	for _, want := range []string{
 		"GOOGLE_ADS_DEVELOPER_TOKEN", "GOOGLE_ADS_CLIENT_ID",
-		"GOOGLE_ADS_CLIENT_SECRET", "GOOGLE_ADS_REFRESH_TOKEN",
+		"GOOGLE_ADS_CLIENT_SECRET",
+		// The refresh token is no longer an env var to set: the fix is to sign
+		// in, which is what the message has to say.
+		"ads login google",
 	} {
 		if !strings.Contains(missing.Error(), want) {
 			t.Errorf("error should name %s: %v", want, missing)

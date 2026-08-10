@@ -310,8 +310,18 @@ func TestRunLoginWizard_HappyPath(t *testing.T) {
 	if _, err := toml.DecodeFile(target, &written); err != nil {
 		t.Fatal(err)
 	}
-	if written.ClientID != "cid" || written.RefreshToken != "rt" || written.DeveloperToken != "devtok" {
+	if written.ClientID != "cid" || written.DeveloperToken != "devtok" {
 		t.Errorf("config not fully written: %+v", written)
+	}
+	if written.RefreshToken != "" {
+		t.Errorf("refresh_token must not be written to the config file: %+v", written)
+	}
+	stored, err := readStoredToken("google")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored == nil || stored.RefreshToken != "rt" {
+		t.Errorf("refresh token not saved to the store: %+v", stored)
 	}
 }
 
@@ -435,6 +445,38 @@ func TestWizardGatherRefreshToken_ReuseExistingSignIn(t *testing.T) {
 		if !strings.Contains(out.String(), "reusing existing sign-in") {
 			t.Errorf("answer %q: expected reuse notice, got %q", answer, out.String())
 		}
+	}
+}
+
+func TestWizardGatherRefreshToken_DoesNotOfferAnUnusableSignIn(t *testing.T) {
+	useTokenStore(t)
+	// The saved sign-in belongs to a different OAuth client, so reusing it
+	// would stage a token that cannot authenticate — and would overwrite the
+	// binding that says so.
+	err := writeStoredToken("google", &storedToken{RefreshToken: "rt-client-a", ClientID: "client-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A "reuse" answer is queued but must go unused; the confirm belongs to the
+	// browser prompt of the fresh sign-in this should fall through to.
+	p := &fakePrompter{lines: []string{"reuse"}, confirms: []bool{false}}
+	creds := clientCreds{kind: "config", clientID: "client-b", clientSecret: "secret"}
+	cfg := &GoogleConfig{RefreshToken: "rt-client-a"}
+	// The flow should fall through to a real sign-in; cancel so the loopback
+	// server returns instead of waiting out the callback timeout.
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	got, err := wizardGatherRefreshToken(ctx, p, io.Discard, creds, cfg, func(string) error { return nil }, 0)
+	if err == nil {
+		t.Fatalf("expected the cancelled sign-in flow to fail, got %q", got)
+	}
+	if p.li != 0 {
+		t.Error("the wizard offered to reuse a sign-in belonging to another OAuth client")
+	}
+	if got == "rt-client-a" {
+		t.Error("the wizard returned a sign-in that cannot authenticate with the configured client")
 	}
 }
 
