@@ -275,11 +275,7 @@ func (c *BingClient) DownloadReport(ctx context.Context, url string) ([]byte, er
 	if err != nil {
 		return nil, err
 	}
-	// A report can be large and slow; the shared client's whole-request timeout
-	// would abort a healthy transfer, so only the response headers are bounded
-	// and the body is bounded by the request context.
-	client := &http.Client{Transport: &http.Transport{ResponseHeaderTimeout: 60 * time.Second}}
-	resp, err := client.Do(req)
+	resp, err := bingDownloadClient().Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("download report: %w", err)
 	}
@@ -295,6 +291,23 @@ func (c *BingClient) DownloadReport(ctx context.Context, url string) ([]byte, er
 		return nil, fmt.Errorf("report download exceeds %d bytes — narrow the date range", bingReportMaxDownload)
 	}
 	return data, nil
+}
+
+// bingDownloadClient is the HTTP client report downloads use.
+//
+// A report can be large and slow; the shared client's whole-request timeout
+// would abort a healthy transfer, so only the response-header wait is bounded
+// and the body is bounded by the request context.
+//
+// The transport is cloned from the default rather than built fresh, because a
+// bare http.Transport has no Proxy function. Behind a mandatory corporate proxy
+// that asymmetry is invisible until it bites: submit and poll go through the
+// shared client and work, and only the download fails, on a direct connection
+// it was never going to get.
+func bingDownloadClient() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.ResponseHeaderTimeout = 60 * time.Second
+	return &http.Client{Transport: transport}
 }
 
 // parseBingReportZip reads the single CSV inside a downloaded report and

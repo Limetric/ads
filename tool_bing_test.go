@@ -792,3 +792,174 @@ func TestBingAllCampaignTypes_CoversTheWholeValueSet(t *testing.T) {
 		}
 	}
 }
+
+func TestBingClient_DiscoversTheManagerAccountWhenNoneIsConfigured(t *testing.T) {
+	var customerHeaders []string
+	var accountQueries int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/Account/Query"):
+			accountQueries++
+			// Customer Management takes neither header, so the lookup cannot
+			// need the value it is looking up.
+			if got := r.Header.Get("CustomerId"); got != "" {
+				t.Errorf("the discovery call must not send CustomerId, got %q", got)
+			}
+			_, _ = w.Write([]byte(`{"Account":{"Id":"123456","ParentCustomerId":"555"}}`))
+		default:
+			customerHeaders = append(customerHeaders, r.Header.Get("CustomerId"))
+			_, _ = w.Write([]byte(`{"Campaigns":[]}`))
+		}
+	}))
+	defer srv.Close()
+	c := newTestBingClientWith(t, srv, &BingConfig{DefaultAccountID: "123456"}) // no CustomerID
+
+	for range 3 {
+		if _, err := c.ListCampaigns(t.Context(), "123456"); err != nil {
+			t.Fatalf("ListCampaigns: %v", err)
+		}
+	}
+	// Microsoft documents CustomerId as required for most operations, so the
+	// documented setup — sign in, set an account — has to produce it.
+	for i, got := range customerHeaders {
+		if got != "555" {
+			t.Errorf("call %d sent CustomerId %q, want the account's parent customer", i+1, got)
+		}
+	}
+	if accountQueries != 1 {
+		t.Errorf("discovery ran %d times, want once per client", accountQueries)
+	}
+}
+
+func TestBingClient_ConfiguredManagerAccountSkipsDiscovery(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/Account/Query") {
+			t.Error("a configured manager account must not be looked up")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if got := r.Header.Get("CustomerId"); got != "777" {
+			t.Errorf("CustomerId = %q, want the configured value", got)
+		}
+		_, _ = w.Write([]byte(`{"Campaigns":[]}`))
+	}))
+	defer srv.Close()
+	if _, err := newTestBingClient(t, srv).ListCampaigns(t.Context(), "123456"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBingClient_ManagerDiscoveryFailureIsNotFatal(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/Account/Query") {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"Errors":[{"Code":106,"ErrorCode":"UserIsNotAuthorized"}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"Campaigns":[]}`))
+	}))
+	defer srv.Close()
+	captureWarnings(t)
+	c := newTestBingClientWith(t, srv, &BingConfig{DefaultAccountID: "123456"})
+
+	// The request still goes out, so the API's own error is what the user sees
+	// rather than one invented here.
+	if _, err := c.ListCampaigns(t.Context(), "123456"); err != nil {
+		t.Errorf("a failed discovery must not fail the call: %v", err)
+	}
+}
+
+func TestRunBingReportTool_KeepsAHandleWhenTheDownloadFails(t *testing.T) {
+	bingReportPollInterval = time.Millisecond
+	t.Cleanup(func() { bingReportPollInterval = 2 * time.Second })
+	useTempState(t)
+
+	// The report completes and the download fails: it stays downloadable, so
+	// the handle must survive rather than forcing a whole new report.
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/GenerateReport/Submit"):
+			_, _ = w.Write([]byte(`{"ReportRequestId":"req-1"}`))
+		case strings.HasSuffix(r.URL.Path, "/GenerateReport/Poll"):
+			_, _ = w.Write([]byte(`{"ReportRequestStatus":{"Status":"Success","ReportDownloadUrl":"` + srv.URL + `/download"}}`))
+		default:
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}))
+	defer srv.Close()
+	c := newTestBingClient(t, srv)
+
+	_, err := runBingReportTool(t.Context(), c, bingCampaignPerformancePreset, BingPerformanceArgs{})
+	if err == nil {
+		t.Fatal("expected the download failure to surface")
+	}
+	if !strings.Contains(err.Error(), "report fetch job_") {
+		t.Errorf("error should hand back a handle for the finished report: %v", err)
+	}
+}
+
+func TestBingDownloadClient_HonoursProxyConfiguration(t *testing.T) {
+	// Submit and poll go through the shared client's default transport, which
+	// reads HTTP(S)_PROXY. A download built on a bare http.Transport would not,
+	// so behind a mandatory proxy only the download would fail — the one step
+	// that runs after the report has already been generated and paid for.
+	//
+	// The proxy function is asserted rather than exercised: net/http resolves
+	// the environment once per process, so setting it from a test that runs
+	// after any other HTTP call has no effect.
+	transport, ok := bingDownloadClient().Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("transport = %T, want *http.Transport", bingDownloadClient().Transport)
+	}
+	if transport.Proxy == nil {
+		t.Error("the download transport has no Proxy function — it would bypass a configured proxy")
+	}
+	if transport.ResponseHeaderTimeout == 0 {
+		t.Error("the download transport must still bound the response-header wait")
+	}
+	// Cloned from the default, not hand-built: that is what keeps the rest of
+	// the environment's HTTP configuration in place.
+	if def := http.DefaultTransport.(*http.Transport); transport.TLSHandshakeTimeout != def.TLSHandshakeTimeout {
+		t.Error("the download transport should start from http.DefaultTransport")
+	}
+}
+
+func TestBingLogin_EnvironmentFlagIsRegistered(t *testing.T) {
+	// The command's Long help tells users to pass it; following your own help
+	// should not produce "unknown flag".
+	flag := bingLoginCmd.Flags().Lookup("environment")
+	if flag == nil {
+		t.Fatal("`ads login bing --environment` is advertised in the help but not registered")
+	}
+	if !strings.Contains(bingLoginCmd.Long, "--environment") {
+		t.Error("the help no longer mentions the flag this test guards")
+	}
+}
+
+func TestBingConfig_ApplyEnvironment(t *testing.T) {
+	// Selecting the sandbox has to bring its developer token with it, however
+	// the environment arrived — a flag that left the token empty would fail as
+	// a missing credential.
+	cfg := &BingConfig{}
+	cfg.applyEnvironment("Sandbox")
+	if cfg.Environment != bingEnvSandbox || cfg.DeveloperToken != bingSandboxDeveloperToken {
+		t.Errorf("sandbox: %+v", cfg)
+	}
+	if !cfg.knownEnvironment() {
+		t.Error("sandbox should be a known environment")
+	}
+	bogus := &BingConfig{}
+	bogus.applyEnvironment("staging")
+	if bogus.knownEnvironment() {
+		t.Error("an unknown environment must not pass validation")
+	}
+	// An explicitly set token is never replaced by the environment's default.
+	kept := &BingConfig{DeveloperToken: "mine"}
+	kept.applyEnvironment("sandbox")
+	if kept.DeveloperToken != "mine" {
+		t.Errorf("developer token = %q, want the configured one kept", kept.DeveloperToken)
+	}
+}

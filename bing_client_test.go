@@ -36,16 +36,33 @@ func newTestBingClientWith(t *testing.T, srv *httptest.Server, cfg *BingConfig) 
 	return c
 }
 
+// bingAccountQueryRoute is the manager-account discovery call. A client with no
+// configured CustomerId makes it once before its first campaign or report
+// request, so every fake that serves those has to answer it too.
+const bingAccountQueryRoute = "/Account/Query"
+
+// bingAccountQueryBody is a minimal account, naming its parent customer.
+const bingAccountQueryBody = `{"Account":{"Id":"123456","ParentCustomerId":"555"}}`
+
 // bingJSONServer answers each request from a map of path suffix → JSON body.
+//
+// The discovery call is answered as a fallback rather than as another entry in
+// the map: a caller that routes it under its full path would otherwise have two
+// suffixes matching the same request, and map iteration order would decide
+// which body won.
 func bingJSONServer(t *testing.T, routes map[string]string) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		for suffix, body := range routes {
 			if strings.HasSuffix(r.URL.Path, suffix) {
-				w.Header().Set("Content-Type", "application/json")
 				_, _ = w.Write([]byte(body))
 				return
 			}
+		}
+		if strings.HasSuffix(r.URL.Path, bingAccountQueryRoute) {
+			_, _ = w.Write([]byte(bingAccountQueryBody))
+			return
 		}
 		t.Errorf("unexpected request path %q", r.URL.Path)
 		w.WriteHeader(http.StatusNotFound)

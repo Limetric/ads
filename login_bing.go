@@ -31,9 +31,10 @@ import (
 const bingLoginRedirectPort = 8086
 
 var (
-	bingLoginPort      int
-	bingLoginNoBrowser bool
-	bingLoginClientID  string
+	bingLoginPort        int
+	bingLoginNoBrowser   bool
+	bingLoginClientID    string
+	bingLoginEnvironment string
 )
 
 // bingLoginRedirectURL builds the redirect URI. Entra requires the literal
@@ -185,6 +186,15 @@ var bingLoginCmd = &cobra.Command{
 		if bingLoginClientID != "" {
 			cfg.ClientID = bingLoginClientID
 		}
+		// The flag wins over the file and the environment: it is the most
+		// explicit statement of which environment this sign-in is for, and the
+		// two have entirely separate credentials.
+		if bingLoginEnvironment != "" {
+			cfg.applyEnvironment(bingLoginEnvironment)
+			if !cfg.knownEnvironment() {
+				return fmt.Errorf("unknown environment %q — use %q or %q", bingLoginEnvironment, bingEnvProduction, bingEnvSandbox)
+			}
+		}
 		if cfg.ClientID == "" {
 			return errors.New("no application (client) ID — pass --client-id, or set BING_ADS_CLIENT_ID. Register a public client application in the Microsoft Entra admin center (Azure portal → App registrations), supporting accounts in any organizational directory and personal Microsoft accounts, with the redirect URI " + bingLoginRedirectURL(bingLoginPort))
 		}
@@ -289,4 +299,5 @@ func init() {
 	bingLoginCmd.Flags().IntVar(&bingLoginPort, "port", bingLoginRedirectPort, "loopback port for the OAuth callback (must match a registered redirect URI)")
 	bingLoginCmd.Flags().BoolVar(&bingLoginNoBrowser, "no-browser", false, "print the auth URL instead of opening a browser")
 	bingLoginCmd.Flags().StringVar(&bingLoginClientID, "client-id", "", "Microsoft Entra application (client) ID")
+	bingLoginCmd.Flags().StringVar(&bingLoginEnvironment, "environment", "", "which environment to sign in to: production (default) or sandbox")
 }

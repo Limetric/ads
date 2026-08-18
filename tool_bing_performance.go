@@ -113,27 +113,31 @@ func runBingReportTool(ctx context.Context, c *BingClient, preset bingReportPres
 	}
 	status, ready, err := awaitBingReport(ctx, c, accountID, requestID, bingReportDeadline)
 	if err != nil {
-		return BingReportResult{}, toolError(preset.Tool, bingPollFailure(spec, requestID, err))
+		return BingReportResult{}, toolError(preset.Tool, bingRecoverableFailure(spec, requestID, err))
 	}
 	if !ready {
 		return bingQueuedResult(spec, requestID)
 	}
 	columns, rows, err := fetchBingReportRows(ctx, c, status)
 	if err != nil {
-		return BingReportResult{}, toolError(preset.Tool, err)
+		// The report finished; only fetching it failed, and it stays
+		// downloadable for the rest of the day — so this hands back a handle
+		// for the same reason a failed poll does.
+		return BingReportResult{}, toolError(preset.Tool, bingRecoverableFailure(spec, requestID, err))
 	}
 	return bingRowsResult(spec.AccountID, spec.dateRange(), spec.columns(), columns, rows), nil
 }
 
-// bingPollFailure keeps a queued report reachable when it was the *poll* that
-// failed rather than the report.
+// bingRecoverableFailure keeps a queued report reachable when the failure was
+// ours to retry rather than the report's to fail.
 //
-// The submit already succeeded, so the report is generating server-side with a
-// request ID this process is the only holder of. Dropping that ID on a throttled
-// or transient poll would force a resubmission — which counts against the
-// in-flight report limit that likely caused the throttle. A report the service
-// itself failed is the exception: there is nothing to come back for.
-func bingPollFailure(spec bingReportSpec, requestID string, cause error) error {
+// The submit already succeeded, so the report exists server-side under a
+// request ID this process is the only holder of — whether it is still
+// generating (a failed poll) or finished and waiting (a failed download).
+// Dropping that ID forces a resubmission, which counts against the in-flight
+// report limit that likely caused the throttle in the first place. A report the
+// service itself failed is the exception: there is nothing to come back for.
+func bingRecoverableFailure(spec bingReportSpec, requestID string, cause error) error {
 	var generation *reportGenerationError
 	if errors.As(cause, &generation) {
 		return cause

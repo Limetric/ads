@@ -185,6 +185,10 @@ ads bing campaign-performance --format table        # spend, clicks, conversions
 ads bing budget set --campaign-id 1 --daily-budget 30
 ```
 
+`BING_ADS_CUSTOMER_ID` (the manager account) is optional: Microsoft requires it
+on most operations, so ads reads it from the ad account on first use and sends
+it from then on. Set it explicitly to pin a particular manager account.
+
 Sign-in needs a **Microsoft Entra application registration** (a public/native
 client, supporting personal and work accounts) whose redirect URI includes
 `http://localhost:8086`, plus a Microsoft Advertising developer token for

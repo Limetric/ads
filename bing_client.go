@@ -9,6 +9,7 @@ import (
 	mathrand "math/rand/v2"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/oauth2"
@@ -26,6 +27,12 @@ type BingClient struct {
 	cfg    *BingConfig
 	http   *http.Client
 	tokens oauth2.TokenSource
+
+	// managerMu guards the manager account discovered from the ad account when
+	// none was configured (see managerCustomerID).
+	managerMu       sync.Mutex
+	managerID       string
+	managerResolved bool
 }
 
 // bingAPIVersion is the API version this client targets. It is the single place
@@ -42,12 +49,17 @@ type bingService struct {
 	Host string
 	// Path is the first URL segment: CampaignManagement, CustomerManagement, Reporting.
 	Path string
+	// ScopedToManager is false for Customer Management, whose operations are
+	// documented as not taking the CustomerId/CustomerAccountId headers. That
+	// is also what makes it the service the manager account can be *discovered*
+	// from without already knowing it (see managerCustomerID).
+	ScopedToManager bool
 }
 
 var (
-	bingCampaignService = bingService{Label: "campaign management", Host: "campaign", Path: "CampaignManagement"}
+	bingCampaignService = bingService{Label: "campaign management", Host: "campaign", Path: "CampaignManagement", ScopedToManager: true}
 	bingCustomerService = bingService{Label: "customer management", Host: "clientcenter", Path: "CustomerManagement"}
-	bingReportService   = bingService{Label: "reporting", Host: "reporting", Path: "Reporting"}
+	bingReportService   = bingService{Label: "reporting", Host: "reporting", Path: "Reporting", ScopedToManager: true}
 )
 
 // url builds the endpoint for one operation. A configured base URL replaces the
@@ -112,7 +124,7 @@ func (c *BingClient) resolveAccountID(explicit string) (string, error) {
 // Microsoft's manager/account split lines up with Google's login-customer /
 // customer split: CustomerId is the manager the user operates from, and
 // CustomerAccountId is the account being acted on.
-func (c *BingClient) buildHeaders(req *http.Request, accountID string) error {
+func (c *BingClient) buildHeaders(ctx context.Context, req *http.Request, svc bingService, accountID string) error {
 	tok, err := c.tokens.Token()
 	if err != nil {
 		return fmt.Errorf("obtain access token: %w", err)
@@ -125,13 +137,51 @@ func (c *BingClient) buildHeaders(req *http.Request, accountID string) error {
 		dev = "test-developer-token"
 	}
 	req.Header.Set("DeveloperToken", dev)
-	if c.cfg.CustomerID != "" {
-		req.Header.Set("CustomerId", c.cfg.CustomerID)
+	if svc.ScopedToManager {
+		if manager := c.managerCustomerID(ctx, accountID); manager != "" {
+			req.Header.Set("CustomerId", manager)
+		}
 	}
 	if accountID != "" {
 		req.Header.Set("CustomerAccountId", accountID)
 	}
 	return nil
+}
+
+// managerCustomerID is the CustomerId header value for a call against
+// accountID: the configured manager account, or the one the account itself
+// names when none was configured.
+//
+// Microsoft documents CustomerId as required for most operations, so leaving it
+// out is not the harmless default it looks like — a setup with only an account
+// ID can list accounts and then have every campaign, report, and budget call
+// rejected. The account knows its own parent, so the value is derivable rather
+// than something to make the user hunt for.
+//
+// Discovery runs at most once per client. It reads through Customer Management,
+// which takes neither of these headers, so the lookup cannot need the value it
+// is looking up. A failed discovery is not fatal: the request goes out without
+// the header exactly as before and the API's own error is what surfaces.
+func (c *BingClient) managerCustomerID(ctx context.Context, accountID string) string {
+	if c.cfg.CustomerID != "" {
+		return c.cfg.CustomerID
+	}
+	if accountID == "" {
+		return ""
+	}
+	c.managerMu.Lock()
+	defer c.managerMu.Unlock()
+	if c.managerResolved {
+		return c.managerID
+	}
+	c.managerResolved = true
+	account, err := c.GetAccount(ctx, accountID)
+	if err != nil {
+		warnOnce("could not look up the manager account for %s (%v) — set BING_ADS_CUSTOMER_ID if Microsoft rejects the requests that follow.", accountID, err)
+		return ""
+	}
+	c.managerID = normalizeBingID(account.ParentCustomerID)
+	return c.managerID
 }
 
 // Throttle codes. Microsoft's limits are per-user, per-minute, and unpublished
@@ -189,7 +239,7 @@ func (c *BingClient) call(ctx context.Context, svc bingService, method, operatio
 		if err != nil {
 			return err
 		}
-		if err := c.buildHeaders(req, accountID); err != nil {
+		if err := c.buildHeaders(ctx, req, svc, accountID); err != nil {
 			return err
 		}
 		resp, err := c.http.Do(req)

@@ -73,6 +73,8 @@ func TestCLI_BingReportFetchRoundTrip(t *testing.T) {
 	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case strings.HasSuffix(r.URL.Path, bingAccountQueryRoute):
+			_, _ = w.Write([]byte(bingAccountQueryBody))
 		case strings.HasSuffix(r.URL.Path, "/GenerateReport/Submit"):
 			_, _ = w.Write([]byte(`{"ReportRequestId":"req-1"}`))
 		case strings.HasSuffix(r.URL.Path, "/GenerateReport/Poll"):

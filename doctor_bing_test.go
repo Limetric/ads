@@ -15,6 +15,8 @@ func bingLiveServer(t *testing.T, campaignStatus int, campaignBody string) *http
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case strings.HasSuffix(r.URL.Path, bingAccountQueryRoute):
+			_, _ = w.Write([]byte(bingAccountQueryBody))
 		case strings.HasSuffix(r.URL.Path, "/AccountsInfo/Query"):
 			_, _ = w.Write([]byte(`{"AccountsInfo":[{"Id":"123456","Name":"Main"},{"Id":"222","Name":"Second"}]}`))
 		case strings.HasSuffix(r.URL.Path, "/Campaigns/QueryByAccountId"):

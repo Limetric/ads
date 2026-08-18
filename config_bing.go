@@ -102,11 +102,27 @@ func (c *BingConfig) finalize() {
 	c.ClientSecret = strings.TrimSpace(c.ClientSecret)
 	c.CustomerID = normalizeBingID(c.CustomerID)
 	c.DefaultAccountID = normalizeBingID(c.DefaultAccountID)
-	c.Environment = normalizeBingEnvironment(c.Environment)
 	c.BaseURL = normalizeBaseURL(c.BaseURL, "")
+	c.applyEnvironment(c.Environment)
+}
+
+// applyEnvironment normalizes the environment and fills in what it implies.
+//
+// It is separate from finalize because the environment can also arrive after
+// the fact, from `ads login bing --environment`, and the sandbox developer
+// token has to follow it there too — a flag that selected the sandbox but left
+// the token empty would fail as a missing credential.
+func (c *BingConfig) applyEnvironment(env string) {
+	c.Environment = normalizeBingEnvironment(env)
 	if c.DeveloperToken == "" && c.Environment == bingEnvSandbox {
 		c.DeveloperToken = bingSandboxDeveloperToken
 	}
+}
+
+// knownEnvironment reports whether the environment is one that exists, so a
+// mistyped one is refused rather than saved into the config file.
+func (c *BingConfig) knownEnvironment() bool {
+	return c.Environment == bingEnvProduction || c.Environment == bingEnvSandbox
 }
 
 // normalizeBingEnvironment maps what a user might write to the two environments

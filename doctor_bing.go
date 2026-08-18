@@ -27,7 +27,7 @@ func bingDoctor(ctx context.Context, out io.Writer, offline bool) (liveResult, e
 	fmt.Fprintf(out, "client secret:      %s\n", bingClientSecretReport(cfg))
 	fmt.Fprintf(out, "token store:        %s\n", store.location())
 	fmt.Fprintf(out, "saved sign-in:      %s\n", store.describe(bingTokenPolicy))
-	fmt.Fprintf(out, "manager (customer): %s\n", orNone(cfg.CustomerID))
+	fmt.Fprintf(out, "manager (customer): %s\n", bingManagerReport(cfg))
 	fmt.Fprintf(out, "default account:    %s\n", orNone(cfg.DefaultAccountID))
 	if err := cfg.validate(refreshToken); err != nil {
 		return liveUnconfigured, err
@@ -53,6 +53,16 @@ func bingDeveloperTokenReport(cfg *BingConfig) string {
 	default:
 		return "set"
 	}
+}
+
+// bingManagerReport describes the manager account. Unset is not "missing":
+// the client reads it from the ad account on first use, so saying "(none)"
+// would report a working setup as an incomplete one.
+func bingManagerReport(cfg *BingConfig) string {
+	if cfg.CustomerID == "" {
+		return "(not set — discovered from the account on first use; set BING_ADS_CUSTOMER_ID to pin it)"
+	}
+	return cfg.CustomerID
 }
 
 // bingClientSecretReport describes the client secret, which is optional and
