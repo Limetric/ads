@@ -109,9 +109,11 @@ func saveBingCredentials(path string, cfg *BingConfig, refreshToken string) erro
 	if cfg.CustomerID != "" {
 		values["customer_id"] = cfg.CustomerID
 	}
-	if cfg.Environment != bingEnvProduction {
-		values["environment"] = cfg.Environment
-	}
+	// Written even when it is the default: mergeBingConfigValues only ever sets
+	// keys, so skipping production would leave an earlier `environment =
+	// "sandbox"` in place and quietly point the new sign-in at the environment
+	// it was just moved away from.
+	values["environment"] = cfg.Environment
 	if err := mergeBingConfigValues(path, values); err != nil {
 		return err
 	}

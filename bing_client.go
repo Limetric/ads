@@ -28,11 +28,10 @@ type BingClient struct {
 	http   *http.Client
 	tokens oauth2.TokenSource
 
-	// managerMu guards the manager account discovered from the ad account when
-	// none was configured (see managerCustomerID).
-	managerMu       sync.Mutex
-	managerID       string
-	managerResolved bool
+	// managerMu guards managers, the manager account discovered from each ad
+	// account when none was configured (see managerCustomerID).
+	managerMu sync.Mutex
+	managers  map[string]string
 }
 
 // bingAPIVersion is the API version this client targets. It is the single place
@@ -158,10 +157,20 @@ func (c *BingClient) buildHeaders(ctx context.Context, req *http.Request, svc bi
 // rejected. The account knows its own parent, so the value is derivable rather
 // than something to make the user hunt for.
 //
-// Discovery runs at most once per client. It reads through Customer Management,
-// which takes neither of these headers, so the lookup cannot need the value it
-// is looking up. A failed discovery is not fatal: the request goes out without
-// the header exactly as before and the API's own error is what surfaces.
+// The result is cached per ad account, not per client. The manager is a
+// property of the account, and one client serves every account a caller names —
+// an MCP server builds one for its whole lifetime — so a single cached value
+// would send the first account's manager along with a second account under a
+// different one. That pair is rejected as unauthorized, which is worse than the
+// omitted header this discovery replaced.
+//
+// Only successful lookups are cached. A transient failure must not decide, for
+// the life of the process, that this account has no manager.
+//
+// Discovery reads through Customer Management, which takes neither of these
+// headers, so the lookup cannot need the value it is looking up — and cannot
+// re-enter this function and deadlock on the mutex it already holds. A service
+// that is ScopedToManager must never be used here.
 func (c *BingClient) managerCustomerID(ctx context.Context, accountID string) string {
 	if c.cfg.CustomerID != "" {
 		return c.cfg.CustomerID
@@ -171,17 +180,23 @@ func (c *BingClient) managerCustomerID(ctx context.Context, accountID string) st
 	}
 	c.managerMu.Lock()
 	defer c.managerMu.Unlock()
-	if c.managerResolved {
-		return c.managerID
+	if manager, ok := c.managers[accountID]; ok {
+		return manager
 	}
-	c.managerResolved = true
 	account, err := c.GetAccount(ctx, accountID)
 	if err != nil {
+		// Deliberately not cached: the next call gets to try again. The request
+		// still goes out without the header, exactly as it did before there was
+		// any discovery, so the API's own error is what the user sees.
 		warnOnce("could not look up the manager account for %s (%v) — set BING_ADS_CUSTOMER_ID if Microsoft rejects the requests that follow.", accountID, err)
 		return ""
 	}
-	c.managerID = normalizeBingID(account.ParentCustomerID)
-	return c.managerID
+	manager := normalizeBingID(account.ParentCustomerID)
+	if c.managers == nil {
+		c.managers = make(map[string]string)
+	}
+	c.managers[accountID] = manager
+	return manager
 }
 
 // Throttle codes. Microsoft's limits are per-user, per-minute, and unpublished

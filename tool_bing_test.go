@@ -4,8 +4,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -961,5 +964,107 @@ func TestBingConfig_ApplyEnvironment(t *testing.T) {
 	kept.applyEnvironment("sandbox")
 	if kept.DeveloperToken != "mine" {
 		t.Errorf("developer token = %q, want the configured one kept", kept.DeveloperToken)
+	}
+}
+
+func TestBingClient_DiscoversAManagerPerAccount(t *testing.T) {
+	var mu sync.Mutex
+	sent := map[string]string{}
+	lookups := map[string]int{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		account := r.Header.Get("CustomerAccountId")
+		mu.Lock()
+		defer mu.Unlock()
+		if strings.HasSuffix(r.URL.Path, bingAccountQueryRoute) {
+			lookups[account]++
+			// Each account sits under its own manager — the ordinary agency
+			// shape, where every client is its own customer.
+			_, _ = w.Write([]byte(`{"Account":{"Id":"` + account + `","ParentCustomerId":"M` + account + `"}}`))
+			return
+		}
+		sent[account] = r.Header.Get("CustomerId")
+		_, _ = w.Write([]byte(`{"Campaigns":[]}`))
+	}))
+	defer srv.Close()
+	c := newTestBingClientWith(t, srv, &BingConfig{DefaultAccountID: "1"}) // no CustomerID
+
+	for _, account := range []string{"1", "2", "1", "2"} {
+		if _, err := c.ListCampaigns(t.Context(), account); err != nil {
+			t.Fatalf("ListCampaigns(%s): %v", account, err)
+		}
+	}
+	// One client serves every account an MCP caller names. Caching the first
+	// account's manager and sending it for the second is a mismatched pair
+	// Microsoft rejects — worse than the omitted header this replaced.
+	if sent["1"] != "M1" || sent["2"] != "M2" {
+		t.Errorf("CustomerId per account = %v, want each account's own manager", sent)
+	}
+	if lookups["1"] != 1 || lookups["2"] != 1 {
+		t.Errorf("lookups = %v, want one per account", lookups)
+	}
+}
+
+func TestBingClient_ManagerDiscoveryRetriesAfterAFailure(t *testing.T) {
+	var mu sync.Mutex
+	var attempts int
+	var lastCustomer string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		mu.Lock()
+		defer mu.Unlock()
+		if strings.HasSuffix(r.URL.Path, bingAccountQueryRoute) {
+			attempts++
+			if attempts == 1 {
+				// A failure on the very first tool call. 403 rather than 5xx:
+				// a 5xx is retried inside the client, so it would never reach
+				// the caching decision this test is about.
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = w.Write([]byte(`{"OperationErrors":[{"Code":106,"ErrorCode":"UserIsNotAuthorized"}]}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"Account":{"Id":"123456","ParentCustomerId":"555"}}`))
+			return
+		}
+		lastCustomer = r.Header.Get("CustomerId")
+		_, _ = w.Write([]byte(`{"Campaigns":[]}`))
+	}))
+	defer srv.Close()
+	captureWarnings(t)
+	c := newTestBingClientWith(t, srv, &BingConfig{DefaultAccountID: "123456"})
+
+	if _, err := c.ListCampaigns(t.Context(), "123456"); err != nil {
+		t.Fatalf("first call: %v", err)
+	}
+	if _, err := c.ListCampaigns(t.Context(), "123456"); err != nil {
+		t.Fatalf("second call: %v", err)
+	}
+	// A failed lookup must not decide, for the life of the process, that this
+	// account has no manager — otherwise the header Microsoft requires goes
+	// missing based on the timing of one early request.
+	if lastCustomer != "555" {
+		t.Errorf("CustomerId after a recovered discovery = %q, want 555", lastCustomer)
+	}
+}
+
+func TestSaveBingCredentials_PersistsAnEnvironmentSwitch(t *testing.T) {
+	useTempState(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(path, []byte("[bing]\nenvironment = \"sandbox\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Moving back to production has to be written down. mergeBingConfigValues
+	// only ever sets keys, so an omitted default would leave the old sandbox
+	// value in place and point the new sign-in at the wrong environment.
+	if err := saveBingCredentials(path, &BingConfig{ClientID: "cid", Environment: bingEnvProduction}, "rt-1"); err != nil {
+		t.Fatalf("saveBingCredentials: %v", err)
+	}
+	cfg, err := loadBingConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Environment != bingEnvProduction {
+		t.Errorf("environment = %q, want the switch persisted", cfg.Environment)
 	}
 }
