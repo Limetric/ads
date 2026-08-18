@@ -498,3 +498,162 @@ func TestWizardGatherRefreshToken_PortBusy(t *testing.T) {
 		t.Errorf("error should point at --port as the fix, got: %v", err)
 	}
 }
+
+// wizardTestEnv points OAuth and the Ads API at a fake server that hands out
+// refresh token "rt" and one accessible customer, and returns an openFn that
+// completes the loopback flow on the given port.
+func wizardTestEnv(t *testing.T, port int) func(string) error {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/token":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"access_token":"at","refresh_token":"rt","token_type":"Bearer","expires_in":3600}`)
+		case r.URL.Path == "/customers:listAccessibleCustomers":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"resourceNames":["customers/1234567890"]}`)
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	oldEndpoint := googleOAuthEndpoint
+	googleOAuthEndpoint = oauth2.Endpoint{AuthURL: srv.URL + "/auth", TokenURL: srv.URL + "/token"}
+	t.Cleanup(func() { googleOAuthEndpoint = oldEndpoint })
+	t.Setenv("GOOGLE_ADS_API_BASE_URL", srv.URL)
+	return func(authURL string) error {
+		u, perr := url.Parse(authURL)
+		if perr != nil {
+			return perr
+		}
+		st := u.Query().Get("state")
+		go http.Get(fmt.Sprintf("http://127.0.0.1:%d/?code=testcode&state=%s", port, st))
+		return nil
+	}
+}
+
+// A config that already has an OAuth client and developer token — the state
+// after a token store went missing — must not replay first-time setup: one
+// confirm, the browser sign-in, done. Nothing else is asked or changed.
+func TestRunLoginWizard_SignInOnlyWhenSetupComplete(t *testing.T) {
+	useTempState(t)
+	clearAdsEnv(t)
+	port := freePort(t)
+	openFn := wizardTestEnv(t, port)
+
+	target, err := configWriteTarget("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFileHelper(target, "client_id = \"cid\"\nclient_secret = \"csec\"\ndeveloper_token = \"devtok\"\nlogin_customer_id = \"1112223333\"\n"); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadLoginConfig("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !wizardSetupComplete(cfg) {
+		t.Fatalf("test config should count as complete: %+v", cfg)
+	}
+
+	// confirms: keep setup? y, open browser? y (fires callback). No lines, no secrets.
+	p := &fakePrompter{confirms: []bool{true, true}}
+	var out strings.Builder
+	if err := runLoginWizard(context.Background(), &out, p, cfg, openFn, port); err != nil {
+		t.Fatalf("wizard failed: %v\n%s", err, out.String())
+	}
+	got := out.String()
+	if strings.Contains(got, "Step 1/5") || strings.Contains(got, "Welcome to ads") {
+		t.Errorf("sign-in-only path replayed the full wizard:\n%s", got)
+	}
+	if !strings.Contains(got, "Found an existing Google Ads setup") || !strings.Contains(got, "111-222-3333") {
+		t.Errorf("missing setup summary:\n%s", got)
+	}
+	if !strings.Contains(got, "Connected") {
+		t.Errorf("missing verify line:\n%s", got)
+	}
+	if p.li != 0 || p.si != 0 {
+		t.Errorf("sign-in-only path must not prompt for values: lines=%d secrets=%d", p.li, p.si)
+	}
+
+	var written GoogleConfig
+	if _, err := toml.DecodeFile(target, &written); err != nil {
+		t.Fatal(err)
+	}
+	if written.ClientID != "cid" || written.DeveloperToken != "devtok" || written.LoginCustomerID != "1112223333" {
+		t.Errorf("existing config values changed: %+v", written)
+	}
+	if written.RefreshToken != "" {
+		t.Errorf("refresh_token must not be written to the config file: %+v", written)
+	}
+	stored, err := readStoredToken("google")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored == nil || stored.RefreshToken != "rt" || stored.ClientID != "cid" {
+		t.Errorf("refresh token not saved to the store: %+v", stored)
+	}
+}
+
+// Declining the shortcut drops into the full wizard, where every prompt
+// defaults to the existing value.
+func TestRunLoginWizard_DeclineSignInOnlyRunsFullWizard(t *testing.T) {
+	useTempState(t)
+	clearAdsEnv(t)
+	port := freePort(t)
+	openFn := wizardTestEnv(t, port)
+
+	target, err := configWriteTarget("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFileHelper(target, "client_id = \"cid\"\nclient_secret = \"csec\"\ndeveloper_token = \"devtok\"\n"); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadLoginConfig("")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// confirms: keep setup? n, step1 open? n, keep client? y, open browser? y,
+	//           keep dev token? y
+	// lines:    step1 enter, login id (skip)
+	p := &fakePrompter{
+		confirms: []bool{false, false, true, true, true},
+		lines:    []string{"", ""},
+	}
+	var out strings.Builder
+	if err := runLoginWizard(context.Background(), &out, p, cfg, openFn, port); err != nil {
+		t.Fatalf("wizard failed: %v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "Step 1/5") || !strings.Contains(out.String(), "Connected") {
+		t.Errorf("expected full wizard run:\n%s", out.String())
+	}
+	if p.ci != 5 || p.li != 2 {
+		t.Errorf("unexpected prompt counts: confirms=%d lines=%d", p.ci, p.li)
+	}
+}
+
+func TestWizardSetupComplete(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  GoogleConfig
+		want bool
+	}{
+		{"empty", GoogleConfig{}, false},
+		{"client only", GoogleConfig{ClientID: "a", ClientSecret: "b"}, false},
+		{"dev token only", GoogleConfig{DeveloperToken: "d"}, false},
+		{"complete", GoogleConfig{ClientID: "a", ClientSecret: "b", DeveloperToken: "d"}, true},
+	}
+	for _, c := range cases {
+		if got := wizardSetupComplete(&c.cfg); got != c.want {
+			t.Errorf("%s: got %v want %v", c.name, got, c.want)
+		}
+	}
+}
