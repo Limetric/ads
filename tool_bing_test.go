@@ -238,7 +238,10 @@ func TestRunBingReportFetch_StillRunning(t *testing.T) {
 }
 
 func TestBingPerformanceArgs_ResolveRange(t *testing.T) {
-	now := time.Date(2026, 8, 10, 0, 0, 0, 0, time.UTC)
+	// Midday UTC is the same calendar day in Pacific, so these cases are about
+	// the range arithmetic; the zone boundary itself is covered separately by
+	// TestBingReportRange_ResolvesYesterdayInTheReportingTimeZone.
+	now := time.Date(2026, 8, 10, 18, 0, 0, 0, time.UTC)
 	tests := []struct {
 		name               string
 		args               BingPerformanceArgs
@@ -960,6 +963,7 @@ func TestBingConfig_ApplyEnvironment(t *testing.T) {
 		t.Error("an unknown environment must not pass validation")
 	}
 	// An explicitly set token is never replaced by the environment's default.
+	// A token written deliberately alongside the environment is left alone.
 	kept := &BingConfig{DeveloperToken: "mine"}
 	kept.applyEnvironment("sandbox")
 	if kept.DeveloperToken != "mine" {
@@ -1066,5 +1070,67 @@ func TestSaveBingCredentials_PersistsAnEnvironmentSwitch(t *testing.T) {
 	}
 	if cfg.Environment != bingEnvProduction {
 		t.Errorf("environment = %q, want the switch persisted", cfg.Environment)
+	}
+}
+
+func TestBingReportRange_ResolvesYesterdayInTheReportingTimeZone(t *testing.T) {
+	// Midnight UTC is still the previous afternoon in Pacific. The reporting
+	// service interprets the range in its own zone, so a window computed from
+	// the host's clock asks for a different one than the caller sees — and with
+	// ReturnOnlyCompleteData false, the extra day comes back partial.
+	utcMidnight := time.Date(2026, 8, 10, 0, 0, 0, 0, time.UTC)
+	start, end := bingReportRange(utcMidnight, 7)
+	if got := end.Format(time.DateOnly); got != "2026-08-08" {
+		t.Errorf("end = %s, want 2026-08-08 (yesterday in Pacific, not in UTC)", got)
+	}
+	if got := start.Format(time.DateOnly); got != "2026-08-02" {
+		t.Errorf("start = %s, want 2026-08-02", got)
+	}
+}
+
+func TestBingReportSpec_NamesTheReportTimeZone(t *testing.T) {
+	spec := bingReportSpec{
+		Preset:    bingCampaignPerformancePreset,
+		AccountID: "123456",
+		Start:     time.Date(2026, 7, 11, 0, 0, 0, 0, time.UTC),
+		End:       time.Date(2026, 8, 9, 0, 0, 0, 0, time.UTC),
+	}
+	body, err := spec.requestBody()
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, _ := body["ReportRequest"].(map[string]any)
+	period, _ := request["Time"].(map[string]any)
+	// Sent rather than left to the documented default, so the zone the dates
+	// were computed in and the zone they are read in cannot drift apart.
+	if period["ReportTimeZone"] != bingReportTimeZone {
+		t.Errorf("ReportTimeZone = %v, want %q", period["ReportTimeZone"], bingReportTimeZone)
+	}
+}
+
+func TestBingReportLocation_IsAvailable(t *testing.T) {
+	// time/tzdata is embedded so this resolves on a host with no zoneinfo
+	// database; the UTC fallback would silently shift the window by a day.
+	if loc := bingReportLocation(); loc == time.UTC {
+		t.Error("the reporting time zone fell back to UTC — is time/tzdata still imported?")
+	}
+}
+
+func TestBingConfig_SwitchEnvironmentReplacesTheOtherEnvironmentsToken(t *testing.T) {
+	captureWarnings(t)
+	// `ads login bing --environment sandbox` against an existing production
+	// setup: carrying the production developer token into the sandbox fails as
+	// error 105, which reads like a broken sign-in rather than the wrong token.
+	cfg := &BingConfig{DeveloperToken: "a-production-token", Environment: bingEnvProduction}
+	cfg.switchEnvironment("sandbox")
+	if cfg.DeveloperToken != bingSandboxDeveloperToken {
+		t.Errorf("developer token = %q, want the universal sandbox token", cfg.DeveloperToken)
+	}
+	// Switching to production leaves the configured token in place — there is
+	// no universal token there to substitute.
+	back := &BingConfig{DeveloperToken: "a-production-token", Environment: bingEnvSandbox}
+	back.switchEnvironment("production")
+	if back.DeveloperToken != "a-production-token" || back.Environment != bingEnvProduction {
+		t.Errorf("switch back = %+v", back)
 	}
 }

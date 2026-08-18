@@ -11,6 +11,11 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	// The report window is computed in the reporting service's time zone, which
+	// has to resolve on hosts without a system zoneinfo database — a scratch
+	// container, or Windows. Embedding it costs binary size and buys a date
+	// range that does not depend on what the host happens to ship.
+	_ "time/tzdata"
 )
 
 // Microsoft has no query language. Every metric ads can report for Bing comes
@@ -34,6 +39,38 @@ var bingReportDeadline = 45 * time.Second
 // processed, so polling faster mostly spends the per-minute call budget that
 // everything else on this platform also draws on.
 var bingReportPollInterval = 2 * time.Second
+
+// bingReportTimeZone is the time zone the reporting service is asked to
+// interpret the date range in, and bingReportZoneName is the same zone for the
+// client-side arithmetic that produces it.
+//
+// The two must agree. The service defaults to Pacific when the request omits a
+// zone, so a client computing "yesterday" from its own clock silently asks for
+// a different window than it thinks: on a UTC host shortly after midnight,
+// local yesterday is still today in Pacific, and — with ReturnOnlyCompleteData
+// false — the answer quietly contains a partial day the caller was promised it
+// would not. Naming the zone in the request and computing against the same one
+// removes the disagreement rather than relying on a default.
+//
+// Pacific rather than the account's own zone: the account's time zone is a
+// separate lookup whose values would still need mapping onto this enumeration,
+// and getting the two halves to agree is the defect. Reporting per account time
+// zone is a later refinement.
+const (
+	bingReportTimeZone = "PacificTimeUSCanadaTijuana"
+	bingReportZoneName = "America/Los_Angeles"
+)
+
+// bingReportLocation resolves the zone the report window is computed in. It
+// falls back to UTC, which shifts the window by at most a day rather than
+// failing a report outright.
+func bingReportLocation() *time.Location {
+	loc, err := time.LoadLocation(bingReportZoneName)
+	if err != nil {
+		return time.UTC
+	}
+	return loc
+}
 
 // Report request status values returned by PollGenerateReport.
 const (
@@ -124,11 +161,15 @@ func (s bingReportSpec) dateRange() string {
 // Today is deliberately excluded. It is always partial, and a "last 30 days"
 // number that silently includes a fraction of today is the kind of figure
 // someone pastes into a report. Google's LAST_30_DAYS means the same thing.
+//
+// "Yesterday" is yesterday in the reporting service's time zone, not the
+// host's: those are different dates for part of every day, and the host's
+// answer is the one the service will not agree with.
 func bingReportRange(now time.Time, days int) (start, end time.Time) {
 	if days < 1 {
 		days = 1
 	}
-	end = now.AddDate(0, 0, -1)
+	end = now.In(bingReportLocation()).AddDate(0, 0, -1)
 	start = end.AddDate(0, 0, -(days - 1))
 	return start, end
 }
@@ -170,6 +211,7 @@ func (s bingReportSpec) requestBody() (map[string]any, error) {
 			"Time": map[string]any{
 				"CustomDateRangeStart": bingDateValue(s.Start),
 				"CustomDateRangeEnd":   bingDateValue(s.End),
+				"ReportTimeZone":       bingReportTimeZone,
 			},
 		},
 	}, nil

@@ -192,7 +192,7 @@ var bingLoginCmd = &cobra.Command{
 		// explicit statement of which environment this sign-in is for, and the
 		// two have entirely separate credentials.
 		if bingLoginEnvironment != "" {
-			cfg.applyEnvironment(bingLoginEnvironment)
+			cfg.switchEnvironment(bingLoginEnvironment)
 			if !cfg.knownEnvironment() {
 				return fmt.Errorf("unknown environment %q — use %q or %q", bingLoginEnvironment, bingEnvProduction, bingEnvSandbox)
 			}

@@ -119,6 +119,24 @@ func (c *BingConfig) applyEnvironment(env string) {
 	}
 }
 
+// switchEnvironment applies an environment the user named explicitly, as
+// `ads login bing --environment sandbox` does.
+//
+// It differs from applyEnvironment in one way: it replaces a developer token
+// belonging to the other environment. The sandbox has a single universal token
+// published for everyone, so a different value arriving with an existing
+// production setup is a production token, and against sandbox hosts it fails as
+// error 105 — which reads like a broken sign-in rather than the wrong token for
+// the environment. A token written deliberately alongside `environment =
+// "sandbox"` in the config is left alone; only an explicit switch overrides it.
+func (c *BingConfig) switchEnvironment(env string) {
+	c.applyEnvironment(env)
+	if c.Environment == bingEnvSandbox && c.DeveloperToken != bingSandboxDeveloperToken {
+		warnOnce("using the universal sandbox developer token (%s) instead of the configured one — the sandbox has only that token, and a production token is rejected there.", bingSandboxDeveloperToken)
+		c.DeveloperToken = bingSandboxDeveloperToken
+	}
+}
+
 // knownEnvironment reports whether the environment is one that exists, so a
 // mistyped one is refused rather than saved into the config file.
 func (c *BingConfig) knownEnvironment() bool {
