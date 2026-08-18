@@ -178,19 +178,6 @@ func TestBingConfig_OAuthCarriesScopes(t *testing.T) {
 	}
 }
 
-func TestParseInt64ID(t *testing.T) {
-	if _, err := parseInt64ID("account_id", "12a3"); err == nil {
-		t.Error("non-numeric IDs must be rejected before they reach a request body")
-	}
-	n, err := parseInt64ID("account_id", " 123-456 ")
-	if err != nil {
-		t.Fatalf("parseInt64ID: %v", err)
-	}
-	if n != 123456 {
-		t.Errorf("parseInt64ID = %d, want 123456", n)
-	}
-}
-
 func TestBingServiceURL(t *testing.T) {
 	tests := []struct {
 		name string

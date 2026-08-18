@@ -103,6 +103,16 @@ func saveBingCredentials(path string, cfg *BingConfig, refreshToken string) erro
 		return fmt.Errorf("read config %q: %w", path, err)
 	}
 	values := map[string]string{"client_id": cfg.ClientID}
+	// The sandbox token is written down because the substitution has to outlive
+	// this process: the next command reloads the file, finds a non-empty
+	// developer token sitting next to environment = "sandbox", and respects it —
+	// so an unpersisted switch leaves the production token in place and every
+	// later call fails as error 105. Only this one value is ever written: it is
+	// public, whereas a production token arriving from the environment is a
+	// secret that has no business being copied into the config file.
+	if cfg.Environment == bingEnvSandbox && cfg.DeveloperToken == bingSandboxDeveloperToken {
+		values["developer_token"] = bingSandboxDeveloperToken
+	}
 	if cfg.ClientSecret != "" {
 		values["client_secret"] = cfg.ClientSecret
 	}

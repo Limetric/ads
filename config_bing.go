@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 
 	"golang.org/x/oauth2"
@@ -176,21 +175,6 @@ func validBingID(id string) bool {
 		}
 	}
 	return true
-}
-
-// parseInt64ID converts an already-validated Bing ID to the numeric form some
-// request bodies want. Most of the API accepts an ID as a JSON string, but the
-// report scope takes real numbers.
-func parseInt64ID(field, id string) (int64, error) {
-	normalized := normalizeBingID(id)
-	if !validBingID(normalized) {
-		return 0, fmt.Errorf("invalid %s %q — expected digits", field, id)
-	}
-	n, err := strconv.ParseInt(normalized, 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("invalid %s %q: %w", field, id, err)
-	}
-	return n, nil
 }
 
 // isTest reports whether we're pointed at a local/offline base URL, in which

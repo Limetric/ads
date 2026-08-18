@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -1055,7 +1056,8 @@ func TestSaveBingCredentials_PersistsAnEnvironmentSwitch(t *testing.T) {
 	useTempState(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
-	if err := os.WriteFile(path, []byte("[bing]\nenvironment = \"sandbox\"\n"), 0o600); err != nil {
+	seed := "[bing]\ndeveloper_token = \"a-production-token\"\n"
+	if err := os.WriteFile(path, []byte(seed), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	// Moving back to production has to be written down. mergeBingConfigValues
@@ -1132,5 +1134,123 @@ func TestBingConfig_SwitchEnvironmentReplacesTheOtherEnvironmentsToken(t *testin
 	back.switchEnvironment("production")
 	if back.DeveloperToken != "a-production-token" || back.Environment != bingEnvProduction {
 		t.Errorf("switch back = %+v", back)
+	}
+}
+
+func TestBingReportSpec_EncodesAccountIdsAsStrings(t *testing.T) {
+	spec := bingReportSpec{Preset: bingCampaignPerformancePreset, AccountID: "123456"}
+	body, err := spec.requestBody()
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, _ := body["ReportRequest"].(map[string]any)
+	scope, _ := request["Scope"].(map[string]any)
+	// This API renders every long as a JSON string — Campaign.Id, BudgetId,
+	// AccountInfo.Id — and the report scope is documented no differently.
+	// Numbers here can have the service reject every report at submission.
+	ids, ok := scope["AccountIds"].([]string)
+	if !ok {
+		t.Fatalf("AccountIds = %#v, want []string", scope["AccountIds"])
+	}
+	if len(ids) != 1 || ids[0] != "123456" {
+		t.Errorf("AccountIds = %v", ids)
+	}
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `"AccountIds":["123456"]`) {
+		t.Errorf("encoded scope = %s", encoded)
+	}
+	// A bad account ID is still refused before anything is sent.
+	if _, err := (bingReportSpec{Preset: bingCampaignPerformancePreset, AccountID: "12a"}).requestBody(); err == nil {
+		t.Error("a non-numeric account ID must be rejected")
+	}
+}
+
+func TestAwaitBingReport_DeadlineBoundsAnInFlightPoll(t *testing.T) {
+	// A poll that hangs must not outlast the deadline: the whole point of the
+	// bound is to hand back a job handle before an MCP host gives up.
+	blocked := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/GenerateReport/Poll") {
+			<-blocked // never answers
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+	defer close(blocked)
+	c := newTestBingClient(t, srv)
+
+	start := time.Now()
+	_, ready, err := awaitBingReport(t.Context(), c, "123456", "req-1", 100*time.Millisecond)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("an unfinished report is not an error: %v", err)
+	}
+	if ready {
+		t.Error("ready = true for a report that never answered")
+	}
+	if elapsed > 2*time.Second {
+		t.Errorf("took %s — the deadline did not bound the in-flight poll", elapsed)
+	}
+}
+
+func TestAwaitBingReport_CallerCancellationIsStillAnError(t *testing.T) {
+	// The caller giving up is not the same as ads' own deadline elapsing, and
+	// must not be reported as "still running".
+	blocked := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-blocked
+	}))
+	defer srv.Close()
+	defer close(blocked)
+	c := newTestBingClient(t, srv)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	go func() { time.Sleep(50 * time.Millisecond); cancel() }()
+	if _, _, err := awaitBingReport(ctx, c, "123456", "req-1", time.Minute); err == nil {
+		t.Error("a cancelled caller should surface its cancellation")
+	}
+}
+
+func TestSaveBingCredentials_PersistsTheSandboxTokenSwitch(t *testing.T) {
+	useTempState(t)
+	captureWarnings(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	seed := "[bing]\ndeveloper_token = \"a-production-token\"\n"
+	if err := os.WriteFile(path, []byte(seed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &BingConfig{ClientID: "cid", DeveloperToken: "a-production-token"}
+	cfg.switchEnvironment("sandbox")
+
+	if err := saveBingCredentials(path, cfg, "rt-1"); err != nil {
+		t.Fatalf("saveBingCredentials: %v", err)
+	}
+	// The substitution has to outlive the process: the next command reloads the
+	// file, and a production token sitting next to environment = "sandbox" is
+	// respected by design — so an unpersisted switch fails as error 105.
+	reloaded, err := loadBingConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.DeveloperToken != bingSandboxDeveloperToken {
+		t.Errorf("developer token after reload = %q, want the sandbox token", reloaded.DeveloperToken)
+	}
+	if reloaded.Environment != bingEnvSandbox {
+		t.Errorf("environment after reload = %q", reloaded.Environment)
+	}
+}
+
+func TestBingDeveloperTokenReport_FlagsAProductionTokenInSandbox(t *testing.T) {
+	// The state a half-completed switch used to leave behind reported a bare
+	// "set", so doctor could not diagnose it either.
+	got := bingDeveloperTokenReport(&BingConfig{DeveloperToken: "a-production-token", Environment: bingEnvSandbox})
+	if !strings.Contains(got, bingSandboxDeveloperToken) {
+		t.Errorf("report = %q, want it to name the universal sandbox token", got)
 	}
 }

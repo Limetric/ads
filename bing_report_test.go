@@ -79,9 +79,11 @@ func TestBingReportSpec_RequestBody(t *testing.T) {
 		t.Error("column headers must be kept — they key every row")
 	}
 	scope, _ := request["Scope"].(map[string]any)
-	ids, _ := scope["AccountIds"].([]int64)
-	if len(ids) != 1 || ids[0] != 123456 {
-		t.Errorf("Scope.AccountIds = %v, want a numeric account ID", scope["AccountIds"])
+	// Strings, not numbers: this API renders every long as a JSON string.
+	// (This assertion previously required []int64, which encoded the bug.)
+	ids, _ := scope["AccountIds"].([]string)
+	if len(ids) != 1 || ids[0] != "123456" {
+		t.Errorf("Scope.AccountIds = %v, want the account ID as a string", scope["AccountIds"])
 	}
 	period, _ := request["Time"].(map[string]any)
 	start, _ := period["CustomDateRangeStart"].(map[string]any)

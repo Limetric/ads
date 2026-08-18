@@ -50,6 +50,11 @@ func bingDeveloperTokenReport(cfg *BingConfig) string {
 		return "set (the universal sandbox token)"
 	case cfg.DeveloperToken == bingSandboxDeveloperToken:
 		return "set to the SANDBOX token, but the environment is " + cfg.Environment + " — production needs its own developer token"
+	case cfg.Environment == bingEnvSandbox:
+		// The mirror image, and the one a half-completed environment switch
+		// leaves behind: a production token against sandbox hosts fails as
+		// error 105, which reads like a broken sign-in.
+		return "set, but it is not the universal sandbox token (" + bingSandboxDeveloperToken + ") — the sandbox rejects a production token"
 	default:
 		return "set"
 	}

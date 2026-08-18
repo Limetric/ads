@@ -182,9 +182,9 @@ func bingDateValue(t time.Time) map[string]any {
 
 // requestBody builds the SubmitGenerateReport payload.
 func (s bingReportSpec) requestBody() (map[string]any, error) {
-	accountID, err := parseInt64ID("account_id", s.AccountID)
-	if err != nil {
-		return nil, err
+	accountID := normalizeBingID(s.AccountID)
+	if !validBingID(accountID) {
+		return nil, fmt.Errorf("invalid account_id %q — expected digits", s.AccountID)
 	}
 	return map[string]any{
 		"ReportRequest": map[string]any{
@@ -207,7 +207,9 @@ func (s bingReportSpec) requestBody() (map[string]any, error) {
 			// column — the same shape the Google metric tools return.
 			"Aggregation": "Summary",
 			"Columns":     s.columns(),
-			"Scope":       map[string]any{"AccountIds": []int64{accountID}},
+			// A string, not a number: this API renders every long that way, and
+			// the report scope is documented the same as the rest.
+			"Scope": map[string]any{"AccountIds": []string{accountID}},
 			"Time": map[string]any{
 				"CustomDateRangeStart": bingDateValue(s.Start),
 				"CustomDateRangeEnd":   bingDateValue(s.End),
@@ -279,11 +281,21 @@ func (e *reportGenerationError) Error() string {
 // service reports failure. ready is false when the deadline passed with the
 // report still running — the caller then hands back a job.
 func awaitBingReport(ctx context.Context, c *BingClient, accountID, requestID string, deadline time.Duration) (status bingReportStatus, ready bool, err error) {
-	timeout := time.NewTimer(deadline)
-	defer timeout.Stop()
+	// The deadline covers the polls themselves, not only the gaps between them.
+	// A single poll can otherwise block for the client's whole 60s timeout, plus
+	// retry backoff, and blow through the bound whose entire purpose is to hand
+	// back a job before an MCP host gives up on the call.
+	pollCtx, cancel := context.WithTimeout(ctx, deadline)
+	defer cancel()
 	for {
-		status, err = c.PollReport(ctx, accountID, requestID)
+		status, err = c.PollReport(pollCtx, accountID, requestID)
 		if err != nil {
+			// Our own deadline elapsing is not a failure — the report is still
+			// being generated, and the caller hands back a handle for it. A
+			// caller who cancelled is a different matter and keeps its error.
+			if pollCtx.Err() != nil && ctx.Err() == nil {
+				return bingReportStatus{}, false, nil
+			}
 			return bingReportStatus{}, false, err
 		}
 		switch status.Status {
@@ -294,10 +306,11 @@ func awaitBingReport(ctx context.Context, c *BingClient, accountID, requestID st
 		}
 		select {
 		case <-time.After(bingReportPollInterval):
-		case <-timeout.C:
+		case <-pollCtx.Done():
+			if ctx.Err() != nil {
+				return status, false, ctx.Err()
+			}
 			return status, false, nil
-		case <-ctx.Done():
-			return status, false, ctx.Err()
 		}
 	}
 }
