@@ -46,8 +46,14 @@ environment = "sandbox"
 	if err != nil {
 		t.Fatalf("loadBingConfig: %v", err)
 	}
-	if cfg.DeveloperToken != "bing-token" || cfg.ClientID != "bing-client" {
+	if cfg.ClientID != "bing-client" {
 		t.Errorf("read Google's top-level keys instead of the [bing] table: %+v", cfg)
+	}
+	// The fixture selects the sandbox, where the developer token is a constant
+	// rather than whatever the file says — the file's own value is untouched
+	// and comes back when the environment does.
+	if cfg.DeveloperToken != bingSandboxDeveloperToken {
+		t.Errorf("developer token = %q, want the sandbox constant", cfg.DeveloperToken)
 	}
 	if cfg.CustomerID != "555111" {
 		t.Errorf("CustomerID = %q, want separators stripped", cfg.CustomerID)

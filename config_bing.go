@@ -105,35 +105,26 @@ func (c *BingConfig) finalize() {
 	c.applyEnvironment(c.Environment)
 }
 
-// applyEnvironment normalizes the environment and fills in what it implies.
+// applyEnvironment normalizes the environment and applies what it implies.
+//
+// The sandbox has exactly one developer token, published for everyone, and no
+// other value works there — so in the sandbox the token is not a preference to
+// respect but a constant, and this decides it at load time. That is what keeps
+// the choice out of the config file: nothing has to be written down, so
+// selecting the sandbox can never overwrite the production token a user keeps
+// there, and switching back finds it exactly as they left it.
 //
 // It is separate from finalize because the environment can also arrive after
-// the fact, from `ads login bing --environment`, and the sandbox developer
-// token has to follow it there too — a flag that selected the sandbox but left
-// the token empty would fail as a missing credential.
+// the fact, from `ads login bing --environment`.
 func (c *BingConfig) applyEnvironment(env string) {
 	c.Environment = normalizeBingEnvironment(env)
-	if c.DeveloperToken == "" && c.Environment == bingEnvSandbox {
-		c.DeveloperToken = bingSandboxDeveloperToken
+	if c.Environment != bingEnvSandbox {
+		return
 	}
-}
-
-// switchEnvironment applies an environment the user named explicitly, as
-// `ads login bing --environment sandbox` does.
-//
-// It differs from applyEnvironment in one way: it replaces a developer token
-// belonging to the other environment. The sandbox has a single universal token
-// published for everyone, so a different value arriving with an existing
-// production setup is a production token, and against sandbox hosts it fails as
-// error 105 — which reads like a broken sign-in rather than the wrong token for
-// the environment. A token written deliberately alongside `environment =
-// "sandbox"` in the config is left alone; only an explicit switch overrides it.
-func (c *BingConfig) switchEnvironment(env string) {
-	c.applyEnvironment(env)
-	if c.Environment == bingEnvSandbox && c.DeveloperToken != bingSandboxDeveloperToken {
-		warnOnce("using the universal sandbox developer token (%s) instead of the configured one — the sandbox has only that token, and a production token is rejected there.", bingSandboxDeveloperToken)
-		c.DeveloperToken = bingSandboxDeveloperToken
+	if c.DeveloperToken != "" && c.DeveloperToken != bingSandboxDeveloperToken {
+		warnOnce("using the universal sandbox developer token (%s) for this run — the sandbox accepts no other, and the configured token is left untouched.", bingSandboxDeveloperToken)
 	}
+	c.DeveloperToken = bingSandboxDeveloperToken
 }
 
 // knownEnvironment reports whether the environment is one that exists, so a

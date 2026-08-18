@@ -102,17 +102,11 @@ func saveBingCredentials(path string, cfg *BingConfig, refreshToken string) erro
 	if err != nil {
 		return fmt.Errorf("read config %q: %w", path, err)
 	}
+	// The developer token is never written here. In the sandbox it is a
+	// constant applied at load time, and in production it is the user's own
+	// credential — writing either would mean a sign-in could overwrite, and
+	// permanently destroy, the token the user keeps in this file.
 	values := map[string]string{"client_id": cfg.ClientID}
-	// The sandbox token is written down because the substitution has to outlive
-	// this process: the next command reloads the file, finds a non-empty
-	// developer token sitting next to environment = "sandbox", and respects it —
-	// so an unpersisted switch leaves the production token in place and every
-	// later call fails as error 105. Only this one value is ever written: it is
-	// public, whereas a production token arriving from the environment is a
-	// secret that has no business being copied into the config file.
-	if cfg.Environment == bingEnvSandbox && cfg.DeveloperToken == bingSandboxDeveloperToken {
-		values["developer_token"] = bingSandboxDeveloperToken
-	}
 	if cfg.ClientSecret != "" {
 		values["client_secret"] = cfg.ClientSecret
 	}
@@ -202,7 +196,7 @@ var bingLoginCmd = &cobra.Command{
 		// explicit statement of which environment this sign-in is for, and the
 		// two have entirely separate credentials.
 		if bingLoginEnvironment != "" {
-			cfg.switchEnvironment(bingLoginEnvironment)
+			cfg.applyEnvironment(bingLoginEnvironment)
 			if !cfg.knownEnvironment() {
 				return fmt.Errorf("unknown environment %q — use %q or %q", bingLoginEnvironment, bingEnvProduction, bingEnvSandbox)
 			}

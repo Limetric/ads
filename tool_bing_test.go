@@ -964,11 +964,20 @@ func TestBingConfig_ApplyEnvironment(t *testing.T) {
 		t.Error("an unknown environment must not pass validation")
 	}
 	// An explicitly set token is never replaced by the environment's default.
-	// A token written deliberately alongside the environment is left alone.
+	// In the sandbox the token is a constant, not a preference: no other value
+	// works there. (This assertion previously required the configured token to
+	// be kept, which is the rule being reversed.)
+	captureWarnings(t)
+	sandbox := &BingConfig{DeveloperToken: "a-production-token"}
+	sandbox.applyEnvironment("sandbox")
+	if sandbox.DeveloperToken != bingSandboxDeveloperToken {
+		t.Errorf("developer token = %q, want the universal sandbox token", sandbox.DeveloperToken)
+	}
+	// Production keeps whatever was configured — there is no constant there.
 	kept := &BingConfig{DeveloperToken: "mine"}
-	kept.applyEnvironment("sandbox")
+	kept.applyEnvironment("production")
 	if kept.DeveloperToken != "mine" {
-		t.Errorf("developer token = %q, want the configured one kept", kept.DeveloperToken)
+		t.Errorf("developer token = %q, want the configured one kept in production", kept.DeveloperToken)
 	}
 }
 
@@ -1118,25 +1127,6 @@ func TestBingReportLocation_IsAvailable(t *testing.T) {
 	}
 }
 
-func TestBingConfig_SwitchEnvironmentReplacesTheOtherEnvironmentsToken(t *testing.T) {
-	captureWarnings(t)
-	// `ads login bing --environment sandbox` against an existing production
-	// setup: carrying the production developer token into the sandbox fails as
-	// error 105, which reads like a broken sign-in rather than the wrong token.
-	cfg := &BingConfig{DeveloperToken: "a-production-token", Environment: bingEnvProduction}
-	cfg.switchEnvironment("sandbox")
-	if cfg.DeveloperToken != bingSandboxDeveloperToken {
-		t.Errorf("developer token = %q, want the universal sandbox token", cfg.DeveloperToken)
-	}
-	// Switching to production leaves the configured token in place — there is
-	// no universal token there to substitute.
-	back := &BingConfig{DeveloperToken: "a-production-token", Environment: bingEnvSandbox}
-	back.switchEnvironment("production")
-	if back.DeveloperToken != "a-production-token" || back.Environment != bingEnvProduction {
-		t.Errorf("switch back = %+v", back)
-	}
-}
-
 func TestBingReportSpec_EncodesAccountIdsAsStrings(t *testing.T) {
 	spec := bingReportSpec{Preset: bingCampaignPerformancePreset, AccountID: "123456"}
 	body, err := spec.requestBody()
@@ -1216,7 +1206,7 @@ func TestAwaitBingReport_CallerCancellationIsStillAnError(t *testing.T) {
 	}
 }
 
-func TestSaveBingCredentials_PersistsTheSandboxTokenSwitch(t *testing.T) {
+func TestSaveBingCredentials_NeverOverwritesTheDeveloperToken(t *testing.T) {
 	useTempState(t)
 	captureWarnings(t)
 	dir := t.TempDir()
@@ -1225,32 +1215,63 @@ func TestSaveBingCredentials_PersistsTheSandboxTokenSwitch(t *testing.T) {
 	if err := os.WriteFile(path, []byte(seed), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg := &BingConfig{ClientID: "cid", DeveloperToken: "a-production-token"}
-	cfg.switchEnvironment("sandbox")
 
-	if err := saveBingCredentials(path, cfg, "rt-1"); err != nil {
-		t.Fatalf("saveBingCredentials: %v", err)
-	}
-	// The substitution has to outlive the process: the next command reloads the
-	// file, and a production token sitting next to environment = "sandbox" is
-	// respected by design — so an unpersisted switch fails as error 105.
-	reloaded, err := loadBingConfig(path)
+	// The round trip: a production token in the config, a visit to the sandbox,
+	// and back. The credential has to come through untouched — it is stored in
+	// exactly one place, and a sign-in that overwrote it would destroy it.
+	cfg, err := loadBingConfig(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reloaded.DeveloperToken != bingSandboxDeveloperToken {
-		t.Errorf("developer token after reload = %q, want the sandbox token", reloaded.DeveloperToken)
+	cfg.ClientID = "cid"
+	cfg.applyEnvironment("sandbox")
+	if cfg.DeveloperToken != bingSandboxDeveloperToken {
+		t.Fatalf("in-process token = %q, want the sandbox one", cfg.DeveloperToken)
 	}
-	if reloaded.Environment != bingEnvSandbox {
-		t.Errorf("environment after reload = %q", reloaded.Environment)
+	if err := saveBingCredentials(path, cfg, "rt-1"); err != nil {
+		t.Fatalf("saveBingCredentials: %v", err)
+	}
+
+	onDisk, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(onDisk), "a-production-token") {
+		t.Fatalf("the production token was destroyed by a sandbox sign-in:\n%s", onDisk)
+	}
+	if strings.Contains(string(onDisk), bingSandboxDeveloperToken) {
+		t.Errorf("the sandbox token was written to the config file:\n%s", onDisk)
+	}
+
+	// Switching back, as the commands actually run it: load (the sandbox
+	// constant applies in memory), select production, save. The developer token
+	// is not used during sign-in, and the file is what the next command reads.
+	back, err := loadBingConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	back.ClientID = "cid"
+	back.applyEnvironment("production")
+	if err := saveBingCredentials(path, back, "rt-2"); err != nil {
+		t.Fatalf("saveBingCredentials (switch back): %v", err)
+	}
+	final, err := loadBingConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if final.Environment != bingEnvProduction {
+		t.Errorf("environment after the round trip = %q", final.Environment)
+	}
+	if final.DeveloperToken != "a-production-token" {
+		t.Errorf("token after the round trip = %q, want the user's own credential back", final.DeveloperToken)
 	}
 }
 
-func TestBingDeveloperTokenReport_FlagsAProductionTokenInSandbox(t *testing.T) {
-	// The state a half-completed switch used to leave behind reported a bare
-	// "set", so doctor could not diagnose it either.
-	got := bingDeveloperTokenReport(&BingConfig{DeveloperToken: "a-production-token", Environment: bingEnvSandbox})
-	if !strings.Contains(got, bingSandboxDeveloperToken) {
-		t.Errorf("report = %q, want it to name the universal sandbox token", got)
+func TestBingDeveloperTokenReport_FlagsTheSandboxTokenInProduction(t *testing.T) {
+	// The reachable mismatch: a sandbox token configured against production.
+	// The reverse cannot survive load, since the sandbox applies its own.
+	got := bingDeveloperTokenReport(&BingConfig{DeveloperToken: bingSandboxDeveloperToken, Environment: bingEnvProduction})
+	if !strings.Contains(got, "SANDBOX") {
+		t.Errorf("report = %q, want it to flag the mismatch", got)
 	}
 }
