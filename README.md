@@ -32,7 +32,7 @@ Google Cloud + developer-token prerequisites, signs you in via the browser, and
 verifies the connection:
 
 ```bash
-ads login google             # interactive: guides you from scratch, then verifies
+ads login google             # interactive: guides you from scratch (or just re-signs in), then verifies
 ```
 
 Prefer to wire it up manually (or in CI)? Set the environment directly and skip

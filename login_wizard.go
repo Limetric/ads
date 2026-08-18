@@ -317,10 +317,41 @@ func wizardGatherRefreshToken(ctx context.Context, p prompter, out io.Writer, cr
 	return rt, nil
 }
 
+// wizardSetupComplete reports whether cfg already holds everything the wizard
+// would otherwise walk the user through — an OAuth client and a developer token.
+// When it does, `ads login google` is being run to (re)establish the sign-in,
+// not to set up from scratch, and the wizard skips straight to the browser step.
+func wizardSetupComplete(cfg *GoogleConfig) bool {
+	return cfg.ClientID != "" && cfg.ClientSecret != "" && cfg.DeveloperToken != ""
+}
+
 // runLoginWizard guides first-time setup end to end: prerequisites, OAuth client,
 // sign-in, developer token, optional MCC id, then writes config and verifies with
 // a live API call.
+//
+// When the config already holds an OAuth client and a developer token, it
+// offers to keep them and only run the sign-in — the case after a token store
+// went missing, or a revoked grant — instead of replaying the five-step
+// first-time script.
 func runLoginWizard(ctx context.Context, out io.Writer, p prompter, cfg *GoogleConfig, openFn func(string) error, port int) error {
+	if wizardSetupComplete(cfg) {
+		fmt.Fprintln(out, "Found an existing Google Ads setup:")
+		fmt.Fprintf(out, "   OAuth client:      %s\n", secretHint(cfg.ClientID))
+		fmt.Fprintf(out, "   developer token:   %s\n", secretHint(cfg.DeveloperToken))
+		if cfg.LoginCustomerID != "" {
+			fmt.Fprintf(out, "   login customer ID: %s\n", dashCustomerID(cfg.LoginCustomerID))
+		}
+		keep, err := p.confirm("Keep these and just sign in?", true)
+		if err != nil {
+			return err
+		}
+		if keep {
+			return runSignInOnly(ctx, out, p, cfg, openFn, port)
+		}
+		fmt.Fprintln(out, "OK — walking through the full setup. Press Enter to keep an existing value.")
+		fmt.Fprintln(out)
+	}
+
 	fmt.Fprintln(out, "Welcome to ads. Let's get you connected to Google Ads.")
 	fmt.Fprintln(out, "You'll need: a Google Cloud project, a Desktop-app OAuth client, and a")
 	fmt.Fprintln(out, "Google Ads developer token. I'll walk you through each — about 5 minutes.")
@@ -361,6 +392,30 @@ func runLoginWizard(ctx context.Context, out io.Writer, p prompter, cfg *GoogleC
 		return err
 	}
 
+	return wizardSaveAndVerify(ctx, out, cfg, creds, refreshToken, devToken, loginCID)
+}
+
+// runSignInOnly is the wizard's short form: the OAuth client and developer
+// token in cfg are kept as they are, and only the sign-in is (re)established.
+// A usable saved sign-in is still offered for reuse, so running it against a
+// working setup is harmless.
+func runSignInOnly(ctx context.Context, out io.Writer, p prompter, cfg *GoogleConfig, openFn func(string) error, port int) error {
+	creds := clientCreds{clientID: cfg.ClientID, clientSecret: cfg.ClientSecret, kind: "config"}
+	fmt.Fprintln(out, "\nSign in (browser)")
+	if err := cfg.resolveRefreshToken(); err != nil {
+		return err
+	}
+	refreshToken, err := wizardGatherRefreshToken(ctx, p, out, creds, cfg, openFn, port)
+	if err != nil {
+		return err
+	}
+	return wizardSaveAndVerify(ctx, out, cfg, creds, refreshToken, cfg.DeveloperToken, cfg.LoginCustomerID)
+}
+
+// wizardSaveAndVerify writes the gathered credentials — client and token to
+// their homes, developer token and MCC id into config — and then proves the
+// setup works with a live API call.
+func wizardSaveAndVerify(ctx context.Context, out io.Writer, cfg *GoogleConfig, creds clientCreds, refreshToken, devToken, loginCID string) error {
 	target, err := configWriteTarget(configPath)
 	if err != nil {
 		return err
