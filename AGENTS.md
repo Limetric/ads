@@ -19,10 +19,16 @@ JSON input schema from the `Args` struct by reflection.
 ## Platforms
 
 Every ad network lives in its own namespace: `ads <platform> <command>` on the
-CLI, `<platform>_<tool>` over MCP. **Google Ads is the only platform implemented
-today.** Shared infrastructure — `login`, `doctor`, `config`, `confirm`, `audit`,
-`mcp`, `version` — is unnamespaced but platform-aware (`ads login google`,
-`ads doctor google`, `ads config google set-customer`).
+CLI, `<platform>_<tool>` over MCP. **Google Ads and Microsoft Advertising (Bing
+Ads) are implemented today.** Shared infrastructure — `login`, `doctor`,
+`config`, `confirm`, `audit`, `mcp`, `version` — is unnamespaced but
+platform-aware (`ads login google`, `ads doctor bing`,
+`ads config google set-customer`).
+
+A platform exposes only what its API has. Bing has no query language and no
+Keyword Planner analogue in v13, so there is no `bing_search` and no
+`bing_keyword_ideas` — a tool that answers "unsupported" is worse than its
+absence, because an agent has to call it to find out.
 
 A platform is a `Platform` value (see `platform.go`) registered from a
 package-level variable:
@@ -66,8 +72,14 @@ Core (platform-neutral):
   the one-time migration of deprecated env/TOML refresh tokens.
 - `doctor.go` — `doctor` command, verdict classification, exit codes.
 - `config_command.go` — `config path` / `config show` and the TOML writers.
-- `mcp.go` — `ads mcp`; iterates platforms and namespaces their tools.
-- `safety.go` — write guards, mutation preview, and the confirm-token flow.
+- `mcp.go` — `ads mcp`; iterates platforms and namespaces their tools. A
+  platform whose credentials don't resolve is skipped with a warning; the server
+  fails only when nothing can be served.
+- `safety.go` — the confirm-token flow: staging, TTL, double confirmation. It
+  knows a write's *platform*, never its payload.
+- `write_tool.go` — `WriteResult`, and the shared apply path over the
+  `mutationApplier` interface each platform's client implements.
+- `guards.go` — spend cap, bid-increase limit, blocked-op list.
 
 Google provider:
 
@@ -77,8 +89,26 @@ Google provider:
 - `mcp_google.go` — every Google MCP tool registration.
 - `client.go` — Google Ads **REST** client (`googleads.googleapis.com/v23`). No gRPC, no protobuf.
 - `gaql.go` — GAQL query building + validation.
-- `login.go` / `login_wizard.go` — `ads login google`.
+- `login.go` / `login_wizard.go` — `ads login google`, plus the shared loopback
+  OAuth server both platforms capture their authorization code on.
+- `write_google.go` — Google's dispatch routes and preview/apply helpers.
 - `tool_*.go` — one file per tool (`Args` + handler + CLI subcommand). Test lives next to it.
+
+Microsoft Advertising (Bing) provider:
+
+- `platform_bing.go` — the registered `Platform` value.
+- `config_bing.go` — `BingConfig` (the `[bing]` TOML table + `BING_ADS_*`),
+  environments, Entra endpoint, validation.
+- `doctor_bing.go` / `config_command_bing.go` — Bing's doctor probes and settings.
+- `mcp_bing.go` — every Bing MCP tool registration.
+- `bing_client.go` — Microsoft Advertising **REST** v13 client: per-service
+  hosts, the four required headers, throttle backoff, fault parsing.
+- `bing_report.go` / `bing_report_job.go` — the Reporting service (submit → poll
+  → download ZIP → parse CSV) and the on-disk job handles that let a slow report
+  be collected by a different process.
+- `login_bing.go` — `ads login bing` (authorization code + PKCE).
+- `write_bing.go` — Bing's dispatch route and per-item partial-failure handling.
+- `tool_bing_*.go` — one file per tool group. Test lives next to it.
 
 ## Conventions (match these)
 
@@ -95,11 +125,21 @@ Google provider:
   TOML or an env var. A platform supplies a `tokenPolicy` saying whether its
   refresh token rotates; everything else — persistence, migration of deprecated
   seeds, `invalid_grant` handling — is shared.
+- A confirmed write is applied through the platform's `mutationApplier`, and the
+  staged record names the platform — that is how `ads confirm <token>` routes a
+  token back to the API that staged it. New platform ⇒ set `Platform.NewApplier`.
+- Partial success is not success. Where an API applies a batch item-by-item
+  (Bing's `PartialErrors`, Google's `partialFailureError`), the apply must fail
+  and say which items landed.
 - Errors: wrap with `%w`, and make messages actionable (tell the user the fix).
 - Tests are table-driven and offline — use `net/http/httptest` to fake the Ads API
-  (set `GOOGLE_ADS_API_BASE_URL` to the test server). `//go:build integration` for live tests.
+  (set `GOOGLE_ADS_API_BASE_URL` / `BING_ADS_API_BASE_URL` to the test server; a
+  loopback base URL is what puts a config in test mode). `//go:build integration`
+  for live tests.
 
 ## Key references
 
 - Google Ads REST API (v23): <https://developers.google.com/google-ads/api/rest/overview>
+- Microsoft Advertising REST API (v13): <https://learn.microsoft.com/en-us/advertising/guides/get-started?view=bingads-13>
+  (sandbox: `*.api.sandbox.bingads.microsoft.com`, universal developer token `BBD37VB98`)
 - MCP Go SDK: <https://github.com/modelcontextprotocol/go-sdk>

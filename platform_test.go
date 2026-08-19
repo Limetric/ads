@@ -114,14 +114,60 @@ func TestGoogleCommandsMatchRegistration(t *testing.T) {
 }
 
 func TestLookupPlatformUnknown(t *testing.T) {
-	_, err := lookupPlatform("bing")
+	_, err := lookupPlatform("yahoo")
 	if err == nil {
 		t.Fatal("expected an error for an unregistered platform")
 	}
 	// The message has to name the platforms that do exist, or the user is left
 	// guessing at the namespace.
-	if !strings.Contains(err.Error(), "google") {
-		t.Errorf("error should list the supported platforms: %v", err)
+	for _, want := range []string{"google", "bing"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should list the supported platforms (missing %q): %v", want, err)
+		}
+	}
+}
+
+func TestBingCommandsMatchRegistration(t *testing.T) {
+	bing := findSubcommand(rootCmd, bingPlatformName)
+	if bing == nil {
+		t.Fatal("`ads bing` is missing")
+	}
+	wired := map[string]bool{}
+	for _, cmd := range bing.Commands() {
+		wired[cmd.Name()] = true
+	}
+	for _, cmd := range bingPlatform.Commands {
+		if !wired[cmd.Name()] {
+			t.Errorf("`ads bing %s` is declared but not wired", cmd.Name())
+		}
+	}
+}
+
+// TestBingSurfaceHasNoGoogleOnlyTools guards the scope decision: Bing exposes
+// what Bing has. A `bing_search` or `bing_keyword_ideas` would have to be a
+// stub that answers "unsupported", which is worse than its absence — an agent
+// has to call it to find that out.
+func TestBingSurfaceHasNoGoogleOnlyTools(t *testing.T) {
+	bing := findSubcommand(rootCmd, bingPlatformName)
+	if bing == nil {
+		t.Fatal("`ads bing` is missing")
+	}
+	for _, cmd := range bing.Commands() {
+		switch cmd.Name() {
+		case "search", "keyword-ideas", "keyword-forecasts", "recommendations", "geo", "pmax":
+			t.Errorf("`ads bing %s` has no Microsoft Advertising equivalent in v1", cmd.Name())
+		}
+	}
+}
+
+// TestPlatformWriteToolsCanConfirm keeps `ads confirm <token>` honest: a
+// platform that stages writes has to be able to apply them, and the routing is
+// by name, so a missing hook only shows up when a user confirms a token.
+func TestPlatformWriteToolsCanConfirm(t *testing.T) {
+	for _, p := range platforms() {
+		if p.NewApplier == nil {
+			t.Errorf("platform %q cannot apply a confirmed write — `ads confirm` would fail on its tokens", p.Name)
+		}
 	}
 }
 

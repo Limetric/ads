@@ -35,7 +35,9 @@ func TestCLI_Audit(t *testing.T) {
 		if err != nil {
 			t.Fatalf("audit: %v\noutput: %s", err, out)
 		}
-		for _, want := range []string{"tool=set_campaign_budget", "tool=pause_entity", "tool=remove_entity", "customer=1234567890", "applied=true"} {
+		// The platform is on every line: two networks both have a
+		// set_campaign_budget, and an account ID does not say which is which.
+		for _, want := range []string{"platform=google", "tool=set_campaign_budget", "tool=pause_entity", "tool=remove_entity", "account=1234567890", "applied=true"} {
 			if !strings.Contains(out, want) {
 				t.Errorf("audit output missing %q:\n%s", want, out)
 			}

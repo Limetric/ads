@@ -212,3 +212,55 @@ the audit log) moves with the binary. There is **no fallback** to the old path:
 an existing install has to move the directory by hand, or re-run
 `ads login google` and re-set its default customer. macOS uses
 `~/Library/Application Support/<name>` for the same directory.
+
+## Microsoft Advertising (Bing), added in [#38](https://github.com/Limetric/goads/issues/38)
+
+The rules above applied to a second platform. Nothing here renames anything —
+these names are new — but they are the worked example of what "symmetrically
+namespaced" means once there is more than one network.
+
+| MCP tool | CLI command | Backed by |
+| --- | --- | --- |
+| `bing_list_accounts` | `ads bing accounts` | Customer Management `AccountsInfo/Query` |
+| `bing_account_info` | `ads bing account-info` | Customer Management `Account/Query` |
+| `bing_campaigns` | `ads bing campaigns` | Campaign Management `Campaigns/QueryByAccountId` |
+| `bing_ad_groups` | `ads bing ad-groups` | Campaign Management `AdGroups/QueryByCampaignId` |
+| `bing_keywords` | `ads bing keywords` | Campaign Management `Keywords/QueryByAdGroupId` |
+| `bing_campaign_performance` | `ads bing campaign-performance` | Reporting `CampaignPerformanceReportRequest` |
+| `bing_keyword_performance` | `ads bing keyword-performance` | Reporting `KeywordPerformanceReportRequest` |
+| `bing_ad_performance` | `ads bing ad-performance` | Reporting `AdPerformanceReportRequest` |
+| `bing_report_fetch` | `ads bing report fetch <job>` | Reporting `GenerateReport/Poll` + download |
+| `bing_set_campaign_budget` | `ads bing budget set` | Campaign Management `Campaigns` (PUT) |
+
+Deliberately absent, because Microsoft has no v13 equivalent: `bing_search` and
+`bing_report` (no query language), `bing_keyword_ideas` / `bing_keyword_forecasts`,
+`bing_geo_targets`, `bing_recommendations`, `bing_pmax`.
+
+### Shared commands, Bing dimension
+
+| Command | Notes |
+| --- | --- |
+| `ads login bing` | Entra authorization code + PKCE, `--client-id`, `--port`, `--no-browser` |
+| `ads doctor bing` | Same verdicts and exit codes as Google's |
+| `ads config bing set-account <id>` | Writes `default_account_id` to the `[bing]` table |
+| `ads confirm <token>` | Routes by the platform recorded on the staged write |
+
+### Environment variables
+
+| Variable | Owner |
+| --- | --- |
+| `BING_ADS_DEVELOPER_TOKEN` | Bing provider (auto-filled in the sandbox) |
+| `BING_ADS_CLIENT_ID` | Bing provider (Microsoft Entra application ID) |
+| `BING_ADS_CLIENT_SECRET` | Bing provider (only for a registered *web* app) |
+| `BING_ADS_CUSTOMER_ID` | Bing provider (manager account → `CustomerId` header) |
+| `BING_ADS_ACCOUNT_ID` | Bing provider (default ad account → `CustomerAccountId` header) |
+| `BING_ADS_ENVIRONMENT` | Bing provider (`production` \| `sandbox`) |
+| `BING_ADS_API_BASE_URL` | Bing provider (per-platform base-URL override; `httptest` hooks in here) |
+
+There is no `BING_ADS_REFRESH_TOKEN`, and there will not be one: Microsoft
+issues a new refresh token on every refresh and invalidates the old one, so a
+value pinned in the environment works exactly once. `ads login bing` writes it to
+the token store, which has to stay writable.
+
+Bing's settings live under a `[bing]` table rather than at the top level, where
+Google's sit for historical reasons. New platforms follow Bing.

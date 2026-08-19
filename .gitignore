@@ -10,3 +10,6 @@ credentials.json
 # OS / editor cruft
 .DS_Store
 *.swp
+
+# `go build ./...` drops a binary named after the module here
+/goads

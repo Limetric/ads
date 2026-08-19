@@ -24,28 +24,29 @@ import (
 // confirmTTL bounds how long a pending confirmation is valid.
 const confirmTTL = 10 * time.Minute
 
-// Dispatch routes a confirmed write to the correct REST endpoint. The empty
-// value means the default googleAds:mutate path; the recommendation variants
-// route to dedicated RPCs because their operations are not valid mutate keys.
-const (
-	dispatchMutate                = ""
-	dispatchApplyRecommendation   = "apply_recommendation"
-	dispatchDismissRecommendation = "dismiss_recommendation"
-	dispatchYouTubeVideoUpload    = "youtube_video_upload"
-)
-
 // PendingMutation is what a write tool stages for confirmation.
 type PendingMutation struct {
-	Token      string `json:"token"`
+	Token string `json:"token"`
+	// Platform is the namespace whose API applies this write. `ads confirm`
+	// reads it to build the right client, so a token staged by one platform is
+	// never applied against another's API. Empty means Google: pending files
+	// written before the field existed are still confirmable.
+	Platform   string `json:"platform,omitempty"`
 	Tool       string `json:"tool"`
 	CustomerID string `json:"customer_id"`
 	Summary    string `json:"summary"`
 	Operations []any  `json:"operations"`
-	// Dispatch selects the apply endpoint; "" = googleAds:mutate.
+	// Dispatch selects the apply endpoint within the platform; the empty value
+	// is each platform's default write path.
 	Dispatch string `json:"dispatch,omitempty"`
 	// ResourceNames carries full recommendation resource paths for the
 	// recommendation dispatches (unused for the default mutate path).
-	ResourceNames []string  `json:"resource_names,omitempty"`
+	ResourceNames []string `json:"resource_names,omitempty"`
+	// BudgetAmounts are the daily budget amounts this write would set, in the
+	// account's currency. It exists so the shared spend cap can be re-checked
+	// at confirm time without safety.go learning how any platform spells a
+	// budget: a staged write declares the number, and the guard compares it.
+	BudgetAmounts []float64 `json:"budget_amounts,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`
 	// RequiresDouble marks destructive operations that need a second
 	// confirmation (issue #12). DoubleConfirmed is set once the first confirm
@@ -54,39 +55,52 @@ type PendingMutation struct {
 	DoubleConfirmed bool `json:"double_confirmed,omitempty"`
 }
 
-// stageMutation persists a pending googleAds:mutate and returns its confirm token.
-func stageMutation(tool, customerID, summary string, ops []any) (*PendingMutation, error) {
-	return stageDispatchFull(tool, customerID, summary, dispatchMutate, ops, nil, false)
+// pendingWrite is what a platform hands to stageWrite. It is a struct rather
+// than a parameter list because platforms fill in different subsets of it, and
+// a positional call would say nothing about which.
+type pendingWrite struct {
+	// Platform is the namespace whose API will apply this write — the one piece
+	// of routing this file keeps, so `ads confirm <token>` can find the right
+	// client without knowing what any platform's operations look like.
+	Platform string
+	// Tool is the tool staging the write; a token is bound to it.
+	Tool string
+	// CustomerID is the account the write acts on, in whatever form the
+	// platform names accounts.
+	CustomerID string
+	// Summary is the human-readable description shown in the preview.
+	Summary string
+	// Dispatch selects the apply endpoint within the platform.
+	Dispatch string
+	// Operations is the platform's own operation payload.
+	Operations []any
+	// ResourceNames carries resource paths for dispatches that take them.
+	ResourceNames []string
+	// BudgetAmounts declares daily budget amounts for the shared spend cap.
+	BudgetAmounts []float64
+	// RequiresDouble forces a second confirmation for a write whose tool name
+	// does not already imply one.
+	RequiresDouble bool
 }
 
-// stageMutationDouble is stageMutation for writes that must take a second
-// confirmation regardless of the tool name — e.g. budget increases over 50%
-// (issue #12).
-func stageMutationDouble(tool, customerID, summary string, ops []any) (*PendingMutation, error) {
-	return stageDispatchFull(tool, customerID, summary, dispatchMutate, ops, nil, true)
-}
-
-// stageDispatch persists a pending write with an explicit dispatch route. Used
-// by recommendation tools that must route to dedicated RPCs on apply.
-func stageDispatch(tool, customerID, summary, dispatch string, ops []any, resourceNames []string) (*PendingMutation, error) {
-	return stageDispatchFull(tool, customerID, summary, dispatch, ops, resourceNames, false)
-}
-
-func stageDispatchFull(tool, customerID, summary, dispatch string, ops []any, resourceNames []string, forceDouble bool) (*PendingMutation, error) {
+// stageWrite persists a pending write and returns its confirm token.
+func stageWrite(w pendingWrite) (*PendingMutation, error) {
 	tok, err := newToken()
 	if err != nil {
 		return nil, err
 	}
 	p := &PendingMutation{
 		Token:          tok,
-		Tool:           tool,
-		CustomerID:     customerID,
-		Summary:        summary,
-		Operations:     ops,
-		Dispatch:       dispatch,
-		ResourceNames:  resourceNames,
+		Platform:       w.Platform,
+		Tool:           w.Tool,
+		CustomerID:     w.CustomerID,
+		Summary:        w.Summary,
+		Operations:     w.Operations,
+		Dispatch:       w.Dispatch,
+		ResourceNames:  w.ResourceNames,
+		BudgetAmounts:  w.BudgetAmounts,
 		CreatedAt:      time.Now().UTC(),
-		RequiresDouble: forceDouble || requiresDoubleConfirmation(tool, nil, nil),
+		RequiresDouble: w.RequiresDouble || requiresDoubleConfirmation(w.Tool, nil, nil),
 	}
 	dir, err := stateDir()
 	if err != nil {
@@ -237,68 +251,43 @@ func restageForDoubleConfirm(p *PendingMutation) (*PendingMutation, error) {
 	return p, nil
 }
 
-// applyPending executes a consumed pending write via the endpoint selected by
-// its Dispatch: the dedicated recommendation RPCs, or the default mutate path.
+// applyOutcome is what a platform's applier hands back once a confirmed write
+// has really been executed: the raw result rows, as that platform returned
+// them. Rendering them is the caller's job (see WriteResult).
 type applyOutcome struct {
 	Results []json.RawMessage
 }
 
-func applyPending(ctx context.Context, c *Client, p *PendingMutation) (*applyOutcome, error) {
-	switch p.Dispatch {
-	case dispatchApplyRecommendation:
-		response, err := c.ApplyRecommendations(ctx, p.CustomerID, p.ResourceNames)
-		if err != nil {
-			return nil, err
-		}
-		if err := partialFailureError(response.PartialErrors); err != nil {
-			return nil, err
-		}
-		return &applyOutcome{Results: response.Results}, nil
-	case dispatchDismissRecommendation:
-		response, err := c.DismissRecommendations(ctx, p.CustomerID, p.ResourceNames)
-		if err != nil {
-			return nil, err
-		}
-		if err := partialFailureError(response.PartialErrors); err != nil {
-			return nil, err
-		}
-		return &applyOutcome{Results: response.Results}, nil
-	case dispatchYouTubeVideoUpload:
-		if len(p.Operations) != 1 {
-			return nil, fmt.Errorf("YouTube video upload confirmation has %d operations; expected 1", len(p.Operations))
-		}
-		operation, ok := p.Operations[0].(map[string]any)
-		if !ok {
-			return nil, fmt.Errorf("YouTube video upload confirmation is corrupt")
-		}
-		filePath, _ := operation["file_path"].(string)
-		title, _ := operation["title"].(string)
-		description, _ := operation["description"].(string)
-		response, err := c.UploadYouTubeVideo(ctx, p.CustomerID, filePath, title, description)
-		if err != nil {
-			return nil, err
-		}
-		result, err := json.Marshal(map[string]any{"resourceName": response.ResourceName})
-		if err != nil {
-			return nil, err
-		}
-		return &applyOutcome{Results: []json.RawMessage{result}}, nil
-	default:
-		response, err := c.Mutate(ctx, p.CustomerID, p.Operations)
-		if err != nil {
-			return nil, err
-		}
-		if err := partialFailureError(response.PartialErrors); err != nil {
-			return nil, err
-		}
-		return &applyOutcome{Results: response.operationResults()}, nil
+// mutationApplier executes a confirmed write against one platform's API. Each
+// platform's client implements it (see (*Client).applyMutation for Google), so
+// staging, confirming, double-confirmation, and auditing are shared and only
+// the final API call is platform-specific.
+type mutationApplier interface {
+	// platformName is the namespace this client writes to. A staged write
+	// records the platform that created it, and the two must agree before
+	// anything is applied: tool names are not unique across platforms — both
+	// networks have a set_campaign_budget — so the tool binding alone would let
+	// one platform's token be handed to another platform's API.
+	platformName() string
+	applyMutation(ctx context.Context, p *PendingMutation) (*applyOutcome, error)
+}
+
+// platform is the namespace that staged this write. An empty field means
+// Google: pending files written before the field existed are still confirmable,
+// and Google was the only platform that could have written one.
+func (p *PendingMutation) platform() string {
+	if p.Platform == "" {
+		return googlePlatformName
 	}
+	return p.Platform
 }
 
 // previewText renders a staged mutation for a human/agent to review.
 func (p *PendingMutation) previewText() string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "PREVIEW — %s on customer %s\n", p.Tool, p.CustomerID)
+	// "account", not "customer": the field is Google's customer ID and Bing's ad
+	// account, and the neutral word is the one that is true on both.
+	fmt.Fprintf(&b, "PREVIEW — %s on account %s\n", p.Tool, p.CustomerID)
 	fmt.Fprintf(&b, "%s\n", p.Summary)
 	fmt.Fprintf(&b, "%d operation(s) staged. Nothing has been changed yet.\n", len(p.Operations))
 	fmt.Fprintf(&b, "\nTo apply, re-run with --confirm %s (or run: ads confirm %s)\n", p.Token, p.Token)
@@ -317,8 +306,15 @@ func auditLog(p *PendingMutation, applied bool) {
 		return
 	}
 	defer f.Close()
-	fmt.Fprintf(f, "%s tool=%s customer=%s ops=%d applied=%t token=%s\n",
-		time.Now().UTC().Format(time.RFC3339), p.Tool, p.CustomerID, len(p.Operations), applied, p.Token)
+	// The platform is part of the line because the tool name alone stopped
+	// identifying the write once two networks had a set_campaign_budget, and an
+	// account ID does not say which network it belongs to.
+	platform := p.Platform
+	if platform == "" {
+		platform = googlePlatformName
+	}
+	fmt.Fprintf(f, "%s platform=%s tool=%s account=%s ops=%d applied=%t token=%s\n",
+		time.Now().UTC().Format(time.RFC3339), platform, p.Tool, p.CustomerID, len(p.Operations), applied, p.Token)
 }
 
 func newToken() (string, error) {

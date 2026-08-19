@@ -2,6 +2,15 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
+	"sync"
+	"time"
 
 	"golang.org/x/oauth2"
 )
@@ -29,6 +38,12 @@ type oauthClient struct {
 	// RefreshToken is the grant access tokens are minted from, as already
 	// resolved from the token store.
 	RefreshToken string
+	// Scopes, when set, are re-sent with every refresh. Google's endpoint
+	// carries the granted scopes on the refresh token itself and needs none;
+	// Microsoft Entra documents `scope` as required on the refresh grant, and
+	// x/oauth2's built-in refresher never sends it. A platform that needs it
+	// says so here.
+	Scopes []string
 	// Offline skips token minting entirely, for a platform pointed at a local
 	// test server rather than its real API.
 	Offline bool
@@ -46,13 +61,120 @@ func newTokenSource(ctx context.Context, oc oauthClient) oauth2.TokenSource {
 		ClientID:     oc.ClientID,
 		ClientSecret: oc.ClientSecret,
 		Endpoint:     oc.Endpoint,
+		Scopes:       oc.Scopes,
+	}
+	// A token carrying only a refresh token; the source mints access tokens.
+	var src oauth2.TokenSource = conf.TokenSource(ctx, &oauth2.Token{RefreshToken: oc.RefreshToken})
+	if len(oc.Scopes) > 0 {
+		// ReuseTokenSource caches the access token in memory and only calls
+		// through when it expires, exactly as conf.TokenSource would.
+		src = oauth2.ReuseTokenSource(nil, &scopedRefreshSource{
+			ctx:          ctx,
+			conf:         conf,
+			refreshToken: oc.RefreshToken,
+		})
 	}
 	return &persistingTokenSource{
 		policy:   oc.tokenPolicy,
 		clientID: oc.ClientID,
-		// A token carrying only a refresh token; the source mints access tokens.
-		src: conf.TokenSource(ctx, &oauth2.Token{RefreshToken: oc.RefreshToken}),
+		src:      src,
 		// Already in the store, so an unchanged refresh token writes nothing.
 		current: oc.RefreshToken,
 	}
+}
+
+// scopedRefreshSource redeems a refresh token with the scopes attached, which
+// x/oauth2's own refresher does not do.
+//
+// It is a plain refresh_token grant otherwise, so its failures still surface as
+// *oauth2.RetrieveError — the type doctor classifies and tokenPolicy.authError
+// turns into "run `ads login <platform>`".
+//
+// The refresh token it holds is replaced by whatever the provider hands back,
+// exactly as x/oauth2's tokenRefresher does. On a rotating platform that is not
+// bookkeeping, it is the difference between working and not: a long-lived
+// process (an `ads mcp` server outliving the access-token lifetime) refreshes
+// more than once, and presenting the token that the *previous* refresh already
+// replaced fails with invalid_grant — sending the user to `ads login` when the
+// store holds a perfectly good token and a restart would have fixed it.
+type scopedRefreshSource struct {
+	ctx  context.Context
+	conf *oauth2.Config
+
+	// mu guards refreshToken. ReuseTokenSource already serializes calls to
+	// Token, but a client documented as safe for concurrent use should not
+	// depend on the caching wrapper for that.
+	mu           sync.Mutex
+	refreshToken string
+}
+
+func (s *scopedRefreshSource) Token() (*oauth2.Token, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.refreshToken == "" {
+		return nil, errors.New("no refresh token to redeem")
+	}
+	// Written out rather than routed through Config.Exchange: that helper always
+	// sends a `code` parameter, and a refresh grant carrying an empty code is
+	// not a request worth explaining to a provider.
+	form := url.Values{
+		"client_id":     {s.conf.ClientID},
+		"grant_type":    {"refresh_token"},
+		"refresh_token": {s.refreshToken},
+		"scope":         {strings.Join(s.conf.Scopes, " ")},
+	}
+	if s.conf.ClientSecret != "" {
+		form.Set("client_secret", s.conf.ClientSecret)
+	}
+	req, err := http.NewRequestWithContext(s.ctx, http.MethodPost, s.conf.Endpoint.TokenURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("refresh access token: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, fmt.Errorf("read token response: %w", err)
+	}
+	var payload struct {
+		AccessToken      string `json:"access_token"`
+		TokenType        string `json:"token_type"`
+		RefreshToken     string `json:"refresh_token"`
+		ExpiresIn        int64  `json:"expires_in"`
+		Error            string `json:"error"`
+		ErrorDescription string `json:"error_description"`
+	}
+	_ = json.Unmarshal(body, &payload)
+	if resp.StatusCode >= 300 || payload.AccessToken == "" {
+		// *oauth2.RetrieveError is the type the rest of ads classifies on:
+		// doctor reads its status, and tokenPolicy.authError turns
+		// invalid_grant into "sign in again".
+		return nil, &oauth2.RetrieveError{
+			Response:         resp,
+			Body:             body,
+			ErrorCode:        payload.Error,
+			ErrorDescription: payload.ErrorDescription,
+		}
+	}
+	tok := &oauth2.Token{
+		AccessToken:  payload.AccessToken,
+		TokenType:    payload.TokenType,
+		RefreshToken: payload.RefreshToken,
+	}
+	if payload.ExpiresIn > 0 {
+		tok.Expiry = time.Now().Add(time.Duration(payload.ExpiresIn) * time.Second)
+	}
+	// A provider that rotates its refresh token sends the replacement here; one
+	// that doesn't leaves the field empty, and the token we already hold stays
+	// current. Either way the next refresh redeems the newest one we have seen.
+	if tok.RefreshToken == "" {
+		tok.RefreshToken = s.refreshToken
+	} else {
+		s.refreshToken = tok.RefreshToken
+	}
+	return tok, nil
 }

@@ -28,18 +28,28 @@ var doctorCmd = &cobra.Command{
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		targets := platforms()
+		var skipped []string
 		if len(args) == 1 {
 			p, err := lookupPlatform(args[0])
 			if err != nil {
 				return err
 			}
+			// Named explicitly: check it whether or not it is set up. "I haven't
+			// configured this yet" is exactly what the user is asking about.
 			targets = []*Platform{p}
+		} else {
+			targets, skipped = configuredPlatforms(targets)
 		}
 		if len(targets) == 0 {
 			return errors.New("no ad platforms are compiled into this binary")
 		}
 
 		out := cmd.OutOrStdout()
+		defer func() {
+			for _, name := range skipped {
+				fmt.Fprintf(out, "\nskipped %s — not configured. Run `ads doctor %s` to see what it needs.\n", name, name)
+			}
+		}()
 		var worst *platformVerdict
 		for i, p := range targets {
 			if i > 0 {
@@ -56,6 +66,27 @@ var doctorCmd = &cobra.Command{
 		}
 		return worst.exit()
 	},
+}
+
+// configuredPlatforms splits a platform list into the ones the user has set up
+// and the names of the ones they haven't, so a plain `ads doctor` reports on
+// the networks in use instead of failing over a platform nobody signed in to.
+//
+// When nothing is configured every platform is returned: a brand-new user runs
+// `ads doctor` precisely to be told what to set up, and an empty report would
+// answer nothing.
+func configuredPlatforms(all []*Platform) (targets []*Platform, skipped []string) {
+	for _, p := range all {
+		if p.configured() {
+			targets = append(targets, p)
+		} else {
+			skipped = append(skipped, p.Name)
+		}
+	}
+	if len(targets) == 0 {
+		return all, nil
+	}
+	return targets, skipped
 }
 
 // platformVerdict pairs a platform's doctor outcome with the error that
