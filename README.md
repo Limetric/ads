@@ -15,13 +15,23 @@ as a single binary with two front-ends over one shared set of tools:
 
 Every platform gets its own namespace — `ads google campaigns` on the CLI,
 `google_campaigns` over MCP — so networks slot in beside each other rather than
-fighting for names. **Google Ads and Microsoft Advertising (Bing Ads) are
-implemented today.** Shared plumbing (`login`, `doctor`, `config`, `confirm`,
+fighting for names. Shared plumbing (`login`, `doctor`, `config`, `confirm`,
 `audit`, `mcp`) stays unnamespaced, with a platform argument where it needs one.
 
 You only configure the platforms you use: `ads doctor` skips the ones you
 haven't set up, and `ads mcp` serves the tools it can and says on stderr which
 platform it left out and why.
+
+## Platforms
+
+| Platform | Setup guide | Surface |
+| --- | --- | --- |
+| Google Ads | [`docs/google.md`](docs/google.md) | 49 tools — GAQL search, reporting, and campaign management |
+| Microsoft Advertising (Bing Ads) | [`docs/bing.md`](docs/bing.md) | 10 tools — entity reads, async reporting, budgets |
+
+Each guide covers that platform's prerequisites, sign-in, environment
+variables, tool coverage, and troubleshooting.
+[`docs/name-map.md`](docs/name-map.md) is the full CLI ↔ MCP name map.
 
 ## Quick start
 
@@ -32,32 +42,32 @@ brew install Limetric/tap/ads
 ```
 
 The fastest way to get set up is the guided sign-in — it walks you through the
-Google Cloud + developer-token prerequisites, signs you in via the browser, and
-verifies the connection:
+prerequisites, signs you in via the browser, and verifies the connection:
 
 ```bash
-ads login google             # interactive: guides you from scratch (or just re-signs in), then verifies
+ads login google      # interactive: guides you from scratch (or just re-signs in), then verifies
+ads doctor            # verify credentials resolve (every configured platform)
+ads google accounts   # list accessible accounts
 ```
 
-Prefer to wire it up manually (or in CI)? Set the environment directly and skip
-the wizard with `--no-input`:
+Then run your first query:
+
+```bash
+ads google search --customer-id 123-456-7890 \
+  --query 'SELECT campaign.id, campaign.name FROM campaign LIMIT 10' | jq
+```
+
+Building from source instead of Homebrew:
 
 ```bash
 go mod tidy
 go build -o build/ads .
-
-export GOOGLE_ADS_DEVELOPER_TOKEN=...
-export GOOGLE_ADS_CLIENT_ID=...
-export GOOGLE_ADS_CLIENT_SECRET=...
-export GOOGLE_ADS_LOGIN_CUSTOMER_ID=123-456-7890   # optional manager account
-
-build/ads login google --no-input   # sign in; saves the refresh token to the token store
-
-build/ads doctor              # verify credentials resolve (every platform)
-build/ads google accounts     # list accessible accounts
-build/ads google search --customer-id 123-456-7890 \
-  --query 'SELECT campaign.id, campaign.name FROM campaign LIMIT 10' | jq
 ```
+
+Google's prerequisites (Cloud project, OAuth client, developer token) and the
+non-interactive `--no-input` path for CI are in
+[`docs/google.md`](docs/google.md). Using Microsoft Advertising? Start at
+[`docs/bing.md`](docs/bing.md) — it differs in ways worth reading first.
 
 ### Where the refresh token lives
 
@@ -73,24 +83,16 @@ ads doctor google        # where the store is, whether it's writable, how old th
 export GOADS_TOKEN_STORE=/path/to/tokens   # containers and CI: mount a writable volume here
 ```
 
-`GOOGLE_ADS_REFRESH_TOKEN` (and `refresh_token` in `config.toml`) still work
-through the 0.x line: the value is copied into the store the first time it is
-used, with a warning, and ignored from then on. Existing setups need no change.
+Each platform's guide covers the rest: deprecated env-var seeds, and running
+several sign-ins side by side.
 
-The store holds one sign-in per platform, so two `--config` files that sign in
-as different Google users need a store each — otherwise the second one picks up
-the first one's sign-in:
+### Defaults and output
 
-```bash
-GOADS_TOKEN_STORE=~/.ads/work     ads --config ~/.ads/work.toml google accounts
-GOADS_TOKEN_STORE=~/.ads/client   ads --config ~/.ads/client.toml google accounts
-```
-
-Work with one account most of the time? Set a default once and drop
-`--customer-id` everywhere (any explicit flag still wins):
+Work with one account most of the time? Set a default once and drop the
+per-command flag (any explicit flag still wins):
 
 ```bash
-ads config google set-customer 123-456-7890   # or: export GOOGLE_ADS_CUSTOMER_ID=123-456-7890
+ads config google set-customer 123-456-7890   # or: ads config bing set-account 123456789
 ads google campaigns                          # uses the default account
 ads config show                               # see the resolved config (secrets redacted)
 ```
@@ -103,7 +105,9 @@ for human- or spreadsheet-friendly output (`campaigns`, `ads`, `keywords …`,
 ads google campaigns --format table
 ```
 
-Writes preview first, then apply with the returned token:
+### Writes preview first
+
+Every mutation previews first and applies only on confirm:
 
 ```bash
 ads google budget set --budget-id 555 --amount-micros 5000000
@@ -113,6 +117,12 @@ ads audit                      # log of every write ads has applied
 ```
 
 (Re-running the original command with `--confirm <token>` still works too.)
+
+Beyond the confirm flow: a client-side allow-list rejects invalid mutation
+operation keys, guard rails (spend cap, bid-increase limit, blocked-op list)
+bound every write across platforms, and new campaigns, ad groups, and ads ship
+**PAUSED** by default. See [`docs/google.md`](docs/google.md#guard-rails) for the
+thresholds and their defaults.
 
 ## As an MCP server
 
@@ -170,86 +180,6 @@ Codex reads the same skill through its own plugin manifest:
 codex plugin marketplace add Limetric/goads
 codex plugin add ads@goads
 ```
-
-## Microsoft Advertising (Bing Ads)
-
-Bing works the same way, under its own namespace:
-
-```bash
-ads login bing --client-id <entra-application-id>   # browser sign-in (auth code + PKCE)
-ads config bing set-account 123456789               # default account for later commands
-ads doctor bing                                     # verify it works
-
-ads bing campaigns                    # campaign settings and budgets
-ads bing campaign-performance --format table        # spend, clicks, conversions
-ads bing budget set --campaign-id 1 --daily-budget 30
-```
-
-`BING_ADS_CUSTOMER_ID` (the manager account) is optional: Microsoft requires it
-on most operations, so ads reads it from the ad account on first use and sends
-it from then on. Set it explicitly to pin a particular manager account.
-
-Sign-in needs a **Microsoft Entra application registration** (a public/native
-client, supporting personal and work accounts) whose redirect URI includes
-`http://localhost:8086`, plus a Microsoft Advertising developer token for
-production. The sandbox needs neither: `BING_ADS_ENVIRONMENT=sandbox` fills in
-Microsoft's universal sandbox developer token for you.
-
-Two differences from Google are worth knowing before you script against it:
-
-- **Metrics are asynchronous.** Microsoft has no query language; every figure
-  comes from the Reporting service, which queues a job. The metric tools wait up
-  to 45 seconds and then return either rows or a job handle:
-  `report queued: job_8f3c` → `ads bing report fetch job_8f3c`. Handles are
-  saved on disk, so a handle from the CLI is fetchable from the MCP server and
-  the other way round.
-- **Money is plain currency, not micros.** `--daily-budget 30` is 30 in the
-  account's currency (`ads bing account-info` reports which).
-
-Microsoft replaces the refresh token on every refresh, so Bing's sign-in cannot
-live in an environment variable at all — the token store has to be writable.
-`ads doctor bing` reports whether it is.
-
-## Tool coverage
-
-Comprehensive Google Ads campaign management plus first-class App campaign
-creation is available (49 MCP tools / equivalent CLI commands). Every name below
-is a `ads google …` subcommand and a `google_…` MCP tool; see
-[`docs/name-map.md`](docs/name-map.md) for the full map.
-
-- **Reads** — `search`, `report`, `accounts` (+ `accounts info` for currency/time
-  zone), `campaigns`, `ads`, keyword performance / search terms / negatives,
-  `geo` search + performance, `conversions`, `policy`, `extensions`, Keyword
-  Planner ideas + forecasts, and recommendations listing. Row-returning reads
-  render as `--format json|table|csv`.
-- **Writes** (all preview-then-confirm) — Search, App, and Performance Max
-  campaign create/update, ad group
-  create/update, RSA drafting, keyword add/remove (+ negatives), bidding
-  strategies + keyword bids, sitelink/callout/snippet extensions, audiences,
-  image/text assets, ad scheduling, Performance Max campaigns, pause/enable/remove,
-  and recommendation apply/dismiss.
-
-Microsoft Advertising exposes what Microsoft has — 10 `bing_…` MCP tools /
-`ads bing …` commands:
-
-- **Reads** — `list_accounts`, `account_info`, `campaigns`, `ad_groups`,
-  `keywords` (entity settings, sub-second) and `campaign_performance`,
-  `keyword_performance`, `ad_performance` (metrics, via Reporting), plus
-  `report_fetch` for a queued report.
-- **Writes** — `set_campaign_budget`, through the same preview-then-confirm flow
-  and the same spend cap as Google's.
-
-There is deliberately no `bing_search` or `bing_keyword_ideas`: Microsoft has no
-query language and no v13 analogue, and a tool that only ever answers
-"unsupported" costs an agent a call to discover that.
-
-Write safety: every mutation previews first and applies only on confirm
-(`ads confirm <token>` or re-running with `--confirm`); `ads audit` shows
-every applied write; a client-side allow-list rejects invalid `googleAds:mutate`
-operation keys; and guard rails (spend cap, bid-increase limit, blocked-op list)
-are configurable via `GOOGLE_ADS_MAX_DAILY_BUDGET`,
-`GOOGLE_ADS_MAX_BID_INCREASE_PCT`, and `GOOGLE_ADS_BLOCKED_OPS`. New
-campaigns/ad groups/ads ship **PAUSED** by default.
 
 ## Shell completion
 

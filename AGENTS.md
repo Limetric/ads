@@ -139,6 +139,11 @@ Microsoft Advertising (Bing) provider:
 
 ## Key references
 
+- User-facing docs: `README.md` (shared concepts), `docs/google.md` and
+  `docs/bing.md` (per-platform setup, login, and tool coverage),
+  `docs/name-map.md` (CLI ↔ MCP name map). A new platform gets its own
+  `docs/<platform>.md` and a row in the README's Platforms table; keep each
+  guide's tool coverage in sync with that platform's MCP registration.
 - Google Ads REST API (v23): <https://developers.google.com/google-ads/api/rest/overview>
 - Microsoft Advertising REST API (v13): <https://learn.microsoft.com/en-us/advertising/guides/get-started?view=bingads-13>
   (sandbox: `*.api.sandbox.bingads.microsoft.com`, universal developer token `BBD37VB98`)
