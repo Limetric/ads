@@ -595,3 +595,213 @@ func TestUpdateCampaign_BudgetCap(t *testing.T) {
 		t.Fatal("expected budget cap rejection")
 	}
 }
+
+// campaignUpdateOp digs the single campaignOperation out of a captured mutate
+// body and returns its update map and field mask.
+func campaignUpdateOp(t *testing.T, body map[string]any) (map[string]any, string) {
+	t.Helper()
+	ops, _ := body["mutateOperations"].([]any)
+	if len(ops) != 1 {
+		t.Fatalf("expected 1 operation, got %d: %v", len(ops), body)
+	}
+	outer, _ := ops[0].(map[string]any)
+	op, ok := outer["campaignOperation"].(map[string]any)
+	if !ok {
+		t.Fatalf("operation is not a campaignOperation: %v", outer)
+	}
+	update, _ := op["update"].(map[string]any)
+	mask, _ := op["updateMask"].(string)
+	return update, mask
+}
+
+// TestUpdateCampaign_GeoTargetTypeMasksOnlySuppliedSides covers the campaign
+// "Location options" setting: each side is masked by its own leaf, so setting
+// one never clears the other, and geoTargetTypeSetting itself never appears
+// bare in the mask (the API rejects a message with defined sub-fields there).
+func TestUpdateCampaign_GeoTargetTypeMasksOnlySuppliedSides(t *testing.T) {
+	tests := []struct {
+		name        string
+		positive    string
+		negative    string
+		wantSetting map[string]any
+		wantMask    string
+	}{
+		{
+			name:        "positive only",
+			positive:    "PRESENCE",
+			wantSetting: map[string]any{"positiveGeoTargetType": "PRESENCE"},
+			wantMask:    "geoTargetTypeSetting.positiveGeoTargetType",
+		},
+		{
+			name:        "negative only",
+			negative:    "PRESENCE",
+			wantSetting: map[string]any{"negativeGeoTargetType": "PRESENCE"},
+			wantMask:    "geoTargetTypeSetting.negativeGeoTargetType",
+		},
+		{
+			name:        "both sides",
+			positive:    "PRESENCE",
+			negative:    "PRESENCE_OR_INTEREST",
+			wantSetting: map[string]any{"positiveGeoTargetType": "PRESENCE", "negativeGeoTargetType": "PRESENCE_OR_INTEREST"},
+			wantMask:    "geoTargetTypeSetting.positiveGeoTargetType,geoTargetTypeSetting.negativeGeoTargetType",
+		},
+		{
+			name:        "case insensitive",
+			positive:    " presence_or_interest ",
+			wantSetting: map[string]any{"positiveGeoTargetType": "PRESENCE_OR_INTEREST"},
+			wantMask:    "geoTargetTypeSetting.positiveGeoTargetType",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			useTempState(t)
+			var searchCalls int
+			var mutateBody map[string]any
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case strings.HasSuffix(r.URL.Path, "googleAds:search"):
+					searchCalls++
+					_, _ = w.Write([]byte(`{"results":[]}`))
+				case strings.HasSuffix(r.URL.Path, "googleAds:mutate"):
+					_ = decodeJSONBody(r, &mutateBody)
+					_, _ = w.Write([]byte(`{"mutateOperationResponses":[{}]}`))
+				}
+			}))
+			defer srv.Close()
+			c := newTestClient(t, srv)
+
+			args := UpdateCampaignArgs{
+				CustomerID:            "1",
+				CampaignID:            "5",
+				PositiveGeoTargetType: tc.positive,
+				NegativeGeoTargetType: tc.negative,
+			}
+			preview, err := runUpdateCampaign(t.Context(), c, args)
+			if err != nil {
+				t.Fatalf("preview: %v", err)
+			}
+			args.Confirm = preview.Token
+			if _, err := runUpdateCampaign(t.Context(), c, args); err != nil {
+				t.Fatalf("confirm: %v", err)
+			}
+			// A location-options-only update needs no bidding or budget lookup.
+			if searchCalls != 0 {
+				t.Errorf("search calls = %d, want 0", searchCalls)
+			}
+			update, mask := campaignUpdateOp(t, mutateBody)
+			if update["resourceName"] != "customers/1/campaigns/5" {
+				t.Errorf("resourceName = %v", update["resourceName"])
+			}
+			setting, _ := update["geoTargetTypeSetting"].(map[string]any)
+			if len(setting) != len(tc.wantSetting) {
+				t.Fatalf("geoTargetTypeSetting = %v, want %v", update["geoTargetTypeSetting"], tc.wantSetting)
+			}
+			for k, want := range tc.wantSetting {
+				if setting[k] != want {
+					t.Errorf("geoTargetTypeSetting[%s] = %v, want %v", k, setting[k], want)
+				}
+			}
+			if mask != tc.wantMask {
+				t.Errorf("updateMask = %q, want %q", mask, tc.wantMask)
+			}
+		})
+	}
+}
+
+// TestUpdateCampaign_GeoTargetTypeSharesBiddingOperation guards against staging
+// two updates of the same campaign resource in one batch: bidding and location
+// options belong to the same campaign, so they travel as one operation.
+func TestUpdateCampaign_GeoTargetTypeSharesBiddingOperation(t *testing.T) {
+	useTempState(t)
+	srv, cap := mutateServer(t)
+	defer srv.Close()
+	c := newTestClient(t, srv)
+
+	args := UpdateCampaignArgs{
+		CustomerID:            "1",
+		CampaignID:            "5",
+		BiddingStrategy:       "TARGET_CPA",
+		TargetCPA:             10,
+		PositiveGeoTargetType: "PRESENCE",
+	}
+	preview, err := runUpdateCampaign(t.Context(), c, args)
+	if err != nil {
+		t.Fatalf("preview: %v", err)
+	}
+	args.Confirm = preview.Token
+	if _, err := runUpdateCampaign(t.Context(), c, args); err != nil {
+		t.Fatalf("confirm: %v", err)
+	}
+	update, mask := campaignUpdateOp(t, cap.lastBody)
+	targetCPA, _ := update["targetCpa"].(map[string]any)
+	if targetCPA == nil || targetCPA["targetCpaMicros"] != "10000000" {
+		t.Errorf("targetCpa = %v", update["targetCpa"])
+	}
+	setting, _ := update["geoTargetTypeSetting"].(map[string]any)
+	if setting == nil || setting["positiveGeoTargetType"] != "PRESENCE" {
+		t.Errorf("geoTargetTypeSetting = %v", update["geoTargetTypeSetting"])
+	}
+	wantMask := "targetCpa.targetCpaMicros,geoTargetTypeSetting.positiveGeoTargetType"
+	if mask != wantMask {
+		t.Errorf("updateMask = %q, want %q", mask, wantMask)
+	}
+}
+
+// TestUpdateCampaign_RejectsInvalidGeoTargetTypeBeforeLookup keeps a bad
+// location option from costing an API round trip or staging an operation
+// Google would only reject at confirm time.
+func TestUpdateCampaign_RejectsInvalidGeoTargetTypeBeforeLookup(t *testing.T) {
+	tests := []struct {
+		name     string
+		args     UpdateCampaignArgs
+		wantText string
+	}{
+		{
+			name:     "unknown positive value",
+			args:     UpdateCampaignArgs{CustomerID: "1", CampaignID: "5", PositiveGeoTargetType: "PRESENSE"},
+			wantText: `unsupported positive_geo_target_type "PRESENSE"`,
+		},
+		{
+			name:     "unknown negative value",
+			args:     UpdateCampaignArgs{CustomerID: "1", CampaignID: "5", NegativeGeoTargetType: "EVERYONE"},
+			wantText: `unsupported negative_geo_target_type "EVERYONE"`,
+		},
+		{
+			name:     "deprecated search interest",
+			args:     UpdateCampaignArgs{CustomerID: "1", CampaignID: "5", PositiveGeoTargetType: "SEARCH_INTEREST"},
+			wantText: "SEARCH_INTEREST is deprecated",
+		},
+		{
+			// The bad value must be caught even when a budget change would
+			// otherwise send the handler to the API first.
+			name:     "rejected ahead of a budget lookup",
+			args:     UpdateCampaignArgs{CustomerID: "1", CampaignID: "5", DailyBudget: 10, PositiveGeoTargetType: "nope"},
+			wantText: `unsupported positive_geo_target_type "nope"`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			useTempState(t)
+			var apiCalls int
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				apiCalls++
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"results":[]}`))
+			}))
+			defer srv.Close()
+			c := newTestClient(t, srv)
+
+			_, err := runUpdateCampaign(t.Context(), c, tc.args)
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			if !strings.Contains(err.Error(), tc.wantText) {
+				t.Errorf("error = %q, want it to contain %q", err, tc.wantText)
+			}
+			if apiCalls != 0 {
+				t.Errorf("API calls = %d, want 0", apiCalls)
+			}
+		})
+	}
+}

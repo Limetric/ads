@@ -187,3 +187,104 @@ func TestDraftCampaign_BlocksBroadManualCPC(t *testing.T) {
 		t.Fatalf("expected the BROAD+MANUAL_CPC guard to block, got %v", err)
 	}
 }
+
+// TestDraftCampaign_GeoTargetTypeSetting covers the campaign "Location
+// options" on the create path: a create carries the setting as a sub-message
+// (no field mask), and each side is written only when supplied.
+func TestDraftCampaign_GeoTargetTypeSetting(t *testing.T) {
+	tests := []struct {
+		name        string
+		positive    string
+		negative    string
+		wantSetting map[string]any
+	}{
+		{name: "omitted leaves the setting unset"},
+		{
+			name:        "positive only",
+			positive:    "PRESENCE",
+			wantSetting: map[string]any{"positiveGeoTargetType": "PRESENCE"},
+		},
+		{
+			name:        "both sides, case insensitive",
+			positive:    "presence",
+			negative:    "presence_or_interest",
+			wantSetting: map[string]any{"positiveGeoTargetType": "PRESENCE", "negativeGeoTargetType": "PRESENCE_OR_INTEREST"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			useTempState(t)
+			srv, cap := mutateServer(t)
+			defer srv.Close()
+			c := newTestClient(t, srv)
+
+			args := DraftCampaignArgs{
+				CustomerID: "1", CampaignName: "x", DailyBudget: 10,
+				BiddingStrategy: "MAXIMIZE_CONVERSIONS", ChannelType: "SEARCH", AdGroupName: "ag",
+				PositiveGeoTargetType: tc.positive,
+				NegativeGeoTargetType: tc.negative,
+			}
+			prev, err := runDraftCampaign(t.Context(), c, args)
+			if err != nil {
+				t.Fatalf("preview: %v", err)
+			}
+			args.Confirm = prev.Token
+			if _, err := runDraftCampaign(t.Context(), c, args); err != nil {
+				t.Fatalf("apply: %v", err)
+			}
+			camp := opCreate(t, cap.lastOps()[1].(map[string]any), "campaignOperation")
+			if tc.wantSetting == nil {
+				if _, ok := camp["geoTargetTypeSetting"]; ok {
+					t.Fatalf("geoTargetTypeSetting should be absent, got %v", camp["geoTargetTypeSetting"])
+				}
+				return
+			}
+			setting, _ := camp["geoTargetTypeSetting"].(map[string]any)
+			if len(setting) != len(tc.wantSetting) {
+				t.Fatalf("geoTargetTypeSetting = %v, want %v", camp["geoTargetTypeSetting"], tc.wantSetting)
+			}
+			for k, want := range tc.wantSetting {
+				if setting[k] != want {
+					t.Errorf("geoTargetTypeSetting[%s] = %v, want %v", k, setting[k], want)
+				}
+			}
+		})
+	}
+}
+
+func TestDraftCampaign_RejectsInvalidGeoTargetType(t *testing.T) {
+	tests := []struct {
+		name     string
+		positive string
+		negative string
+		wantText string
+	}{
+		{"unknown positive", "PRESENSE", "", `unsupported positive_geo_target_type "PRESENSE"`},
+		{"unknown negative", "", "INTEREST", `unsupported negative_geo_target_type "INTEREST"`},
+		{"deprecated search interest", "SEARCH_INTEREST", "", "SEARCH_INTEREST is deprecated"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			useTempState(t)
+			srv, cap := mutateServer(t)
+			defer srv.Close()
+			c := newTestClient(t, srv)
+
+			_, err := runDraftCampaign(t.Context(), c, DraftCampaignArgs{
+				CustomerID: "1", CampaignName: "x", DailyBudget: 10,
+				BiddingStrategy: "MAXIMIZE_CONVERSIONS", ChannelType: "SEARCH", AdGroupName: "ag",
+				PositiveGeoTargetType: tc.positive,
+				NegativeGeoTargetType: tc.negative,
+			})
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			if !strings.Contains(err.Error(), tc.wantText) {
+				t.Errorf("error = %q, want it to contain %q", err, tc.wantText)
+			}
+			if cap.calls != 0 {
+				t.Errorf("mutate calls = %d, want 0", cap.calls)
+			}
+		})
+	}
+}
