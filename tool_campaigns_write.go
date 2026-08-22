@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -57,6 +58,63 @@ func applyBiddingStrategyCreate(campaign map[string]any, strategy string, cpa, r
 	return nil
 }
 
+// campaign.geo_target_type_setting decides how Google matches people to a
+// campaign's targeted and excluded locations — the "Location options" the Ads
+// UI puts under a campaign's Locations setting. PRESENCE_OR_INTEREST also
+// reaches (or excludes) people who merely show interest in a location;
+// PRESENCE is limited to people regularly in it. The positive enum carries a
+// third value, SEARCH_INTEREST, that most campaign types no longer accept.
+const (
+	geoTargetTypePresenceOrInterest = "PRESENCE_OR_INTEREST"
+	geoTargetTypePresence           = "PRESENCE"
+)
+
+// parseGeoTargetType validates a caller-supplied geo target type
+// (case-insensitive) for the named argument.
+func parseGeoTargetType(field, s string) (string, error) {
+	switch v := strings.ToUpper(strings.TrimSpace(s)); v {
+	case geoTargetTypePresenceOrInterest, geoTargetTypePresence:
+		return v, nil
+	case "SEARCH_INTEREST":
+		return "", fmt.Errorf("%s SEARCH_INTEREST is deprecated in the Google Ads API and is no longer settable for most campaign types — use PRESENCE_OR_INTEREST or PRESENCE", field)
+	default:
+		return "", fmt.Errorf("unsupported %s %q — use PRESENCE_OR_INTEREST (people in, or interested in, the location) or PRESENCE (people in the location only)", field, s)
+	}
+}
+
+// geoTargetTypeSetting builds a campaign's geoTargetTypeSetting sub-message
+// from the supplied positive/negative types, plus the field-mask leaves naming
+// the ones actually set (creates ignore the mask). It returns a nil map when
+// neither is given, so an omitted setting stays untouched.
+//
+// The leaves are masked rather than the message: geoTargetTypeSetting has
+// defined sub-fields, so it cannot appear bare in a field mask, and masking
+// only the supplied side keeps the other from being cleared.
+func geoTargetTypeSetting(positive, negative string) (map[string]any, []string, error) {
+	setting := map[string]any{}
+	var mask []string
+	if strings.TrimSpace(positive) != "" {
+		v, err := parseGeoTargetType("positive_geo_target_type", positive)
+		if err != nil {
+			return nil, nil, err
+		}
+		setting["positiveGeoTargetType"] = v
+		mask = append(mask, "geoTargetTypeSetting.positiveGeoTargetType")
+	}
+	if strings.TrimSpace(negative) != "" {
+		v, err := parseGeoTargetType("negative_geo_target_type", negative)
+		if err != nil {
+			return nil, nil, err
+		}
+		setting["negativeGeoTargetType"] = v
+		mask = append(mask, "geoTargetTypeSetting.negativeGeoTargetType")
+	}
+	if len(setting) == 0 {
+		return nil, nil, nil
+	}
+	return setting, mask, nil
+}
+
 // adGroupTypeForChannel maps a channel type to its standard ad group type.
 func adGroupTypeForChannel(channelType string) string {
 	if channelType == "DISPLAY" {
@@ -79,8 +137,11 @@ type DraftCampaignArgs struct {
 	Keywords        []KeywordWithMatchType `json:"keywords,omitempty" jsonschema:"optional keywords to add to the ad group"`
 	GeoTargetIDs    []string               `json:"geo_target_ids,omitempty" jsonschema:"optional geo target constant IDs"`
 	LanguageIDs     []string               `json:"language_ids,omitempty" jsonschema:"optional language constant IDs"`
-	Status          string                 `json:"status,omitempty" jsonschema:"ENABLED or PAUSED; defaults to PAUSED"`
-	Confirm         string                 `json:"confirm,omitempty" jsonschema:"a confirm token from a previous preview; omit to preview"`
+	// Location options — how targeted/excluded locations are matched.
+	PositiveGeoTargetType string `json:"positive_geo_target_type,omitempty" jsonschema:"how targeted locations are matched: PRESENCE_OR_INTEREST (the Google default) or PRESENCE for people in the location only"`
+	NegativeGeoTargetType string `json:"negative_geo_target_type,omitempty" jsonschema:"how excluded locations are matched: PRESENCE (recommended) or PRESENCE_OR_INTEREST, which most campaign types no longer accept"`
+	Status                string `json:"status,omitempty" jsonschema:"ENABLED or PAUSED; defaults to PAUSED"`
+	Confirm               string `json:"confirm,omitempty" jsonschema:"a confirm token from a previous preview; omit to preview"`
 }
 
 func runDraftCampaign(ctx context.Context, c *Client, args DraftCampaignArgs) (WriteResult, error) {
@@ -121,6 +182,10 @@ func runDraftCampaign(ctx context.Context, c *Client, args DraftCampaignArgs) (W
 		}
 	}
 	status, err := parseCreateStatus(args.Status)
+	if err != nil {
+		return WriteResult{}, err
+	}
+	geoSetting, _, err := geoTargetTypeSetting(args.PositiveGeoTargetType, args.NegativeGeoTargetType)
 	if err != nil {
 		return WriteResult{}, err
 	}
@@ -167,6 +232,9 @@ func runDraftCampaign(ctx context.Context, c *Client, args DraftCampaignArgs) (W
 		},
 		// Required by EU TTPA regulation (Oct 2025+); defaults to "does not contain".
 		"containsEuPoliticalAdvertising": "DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING",
+	}
+	if geoSetting != nil {
+		campaignCreate["geoTargetTypeSetting"] = geoSetting
 	}
 	if err := applyBiddingStrategyCreate(campaignCreate, args.BiddingStrategy, args.TargetCPA, args.TargetROAS); err != nil {
 		return WriteResult{}, err
@@ -274,6 +342,8 @@ func init() {
 	f.StringArrayVar(&draftCampaignKwFlags, "keyword", nil, "keyword as text|MATCHTYPE (repeatable)")
 	f.StringArrayVar(&draftCampaignArgs.GeoTargetIDs, "geo-target-id", nil, "geo target constant ID (repeatable)")
 	f.StringArrayVar(&draftCampaignArgs.LanguageIDs, "language-id", nil, "language constant ID (repeatable)")
+	f.StringVar(&draftCampaignArgs.PositiveGeoTargetType, "positive-geo-target-type", "", "location option for targeted locations: PRESENCE_OR_INTEREST or PRESENCE")
+	f.StringVar(&draftCampaignArgs.NegativeGeoTargetType, "negative-geo-target-type", "", "location option for excluded locations: PRESENCE (recommended) or PRESENCE_OR_INTEREST")
 	f.StringVar(&draftCampaignArgs.Status, "status", "", "ENABLED, PAUSED (default), or REMOVED")
 	f.StringVar(&draftCampaignArgs.Confirm, "confirm", "", "confirm token from a previous preview")
 	_ = campaignCreateCmd.MarkFlagRequired("name")

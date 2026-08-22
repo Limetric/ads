@@ -10,9 +10,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// This file updates a campaign's budget and bidding strategy, and can add
-// geo/language targeting. A budget change targets the campaign's budget
-// resource (a distinct ID), which is resolved from the API first.
+// This file updates a campaign's budget, bidding strategy, and location
+// options, and can add geo/language targeting. A budget change targets the
+// campaign's budget resource (a distinct ID), which is resolved from the API
+// first.
 
 // applyBiddingStrategyUpdate sets the bidding sub-field on a campaign update map
 // and records the touched fields in mask. In v23 bidding_strategy_type is
@@ -221,7 +222,11 @@ type UpdateCampaignArgs struct {
 	DailyBudget     float64  `json:"daily_budget,omitempty" jsonschema:"new daily budget in currency units (capped by the budget guard)"`
 	GeoTargetIDs    []string `json:"geo_target_ids,omitempty" jsonschema:"geo target constant IDs to add"`
 	LanguageIDs     []string `json:"language_ids,omitempty" jsonschema:"language constant IDs to add"`
-	Confirm         string   `json:"confirm,omitempty" jsonschema:"a confirm token from a previous preview; omit to preview"`
+	// Location options — how targeted/excluded locations are matched. Each
+	// side is left untouched when omitted.
+	PositiveGeoTargetType string `json:"positive_geo_target_type,omitempty" jsonschema:"how targeted locations are matched: PRESENCE_OR_INTEREST or PRESENCE for people in the location only"`
+	NegativeGeoTargetType string `json:"negative_geo_target_type,omitempty" jsonschema:"how excluded locations are matched: PRESENCE (recommended) or PRESENCE_OR_INTEREST, which most campaign types no longer accept"`
+	Confirm               string `json:"confirm,omitempty" jsonschema:"a confirm token from a previous preview; omit to preview"`
 }
 
 func runUpdateCampaign(ctx context.Context, c *Client, args UpdateCampaignArgs) (WriteResult, error) {
@@ -250,6 +255,11 @@ func runUpdateCampaign(ctx context.Context, c *Client, args UpdateCampaignArgs) 
 		if err := validateBiddingStrategyTargets(args.BiddingStrategy, args.TargetCPA, args.TargetROAS); err != nil {
 			return WriteResult{}, err
 		}
+	}
+	// Validated before any lookup so a typo costs no API round trip.
+	geoSetting, geoMask, err := geoTargetTypeSetting(args.PositiveGeoTargetType, args.NegativeGeoTargetType)
+	if err != nil {
+		return WriteResult{}, err
 	}
 	var ops []any
 	doubleConfirm := false
@@ -300,12 +310,21 @@ func runUpdateCampaign(ctx context.Context, c *Client, args UpdateCampaignArgs) 
 			strategy = ""
 		}
 	}
+	// Bidding and location options both live on the campaign resource, so they
+	// share one operation rather than staging two updates of the same resource
+	// in a single batch.
+	update := map[string]any{"resourceName": campaignResource}
+	var mask []string
 	if strategy != "" {
-		update := map[string]any{"resourceName": campaignResource}
-		var mask []string
 		if err := applyBiddingStrategyUpdate(update, &mask, strategy, args.TargetCPA, args.TargetROAS); err != nil {
 			return WriteResult{}, err
 		}
+	}
+	if geoSetting != nil {
+		update["geoTargetTypeSetting"] = geoSetting
+		mask = append(mask, geoMask...)
+	}
+	if len(mask) > 0 {
 		ops = append(ops, map[string]any{"campaignOperation": map[string]any{"update": update, "updateMask": strings.Join(mask, ",")}})
 	}
 
@@ -339,7 +358,7 @@ var updateCampaignArgs UpdateCampaignArgs
 
 var campaignUpdateCmd = &cobra.Command{
 	Use:   "update",
-	Short: "Update a campaign's budget, bidding, or targeting (previews first; --confirm to apply)",
+	Short: "Update a campaign's budget, bidding, targeting, or location options (previews first; --confirm to apply)",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		client, err := newGoogleClient(cmd.Context())
@@ -364,6 +383,8 @@ func init() {
 	f.Float64Var(&updateCampaignArgs.DailyBudget, "daily-budget", 0, "new daily budget in currency units")
 	f.StringArrayVar(&updateCampaignArgs.GeoTargetIDs, "geo-target-id", nil, "geo target constant ID to add (repeatable)")
 	f.StringArrayVar(&updateCampaignArgs.LanguageIDs, "language-id", nil, "language constant ID to add (repeatable)")
+	f.StringVar(&updateCampaignArgs.PositiveGeoTargetType, "positive-geo-target-type", "", "location option for targeted locations: PRESENCE_OR_INTEREST or PRESENCE")
+	f.StringVar(&updateCampaignArgs.NegativeGeoTargetType, "negative-geo-target-type", "", "location option for excluded locations: PRESENCE (recommended) or PRESENCE_OR_INTEREST")
 	f.StringVar(&updateCampaignArgs.Confirm, "confirm", "", "confirm token from a previous preview")
 	_ = campaignUpdateCmd.MarkFlagRequired("campaign-id")
 

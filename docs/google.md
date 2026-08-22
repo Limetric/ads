@@ -156,6 +156,13 @@ bids, sitelink/callout/structured-snippet extensions, custom audiences and
 audience targeting, image/YouTube/text asset upload, ad scheduling,
 pause/enable/remove, and recommendation apply/dismiss.
 
+`campaign create` and `campaign update` carry the budget, the bidding strategy,
+geo/language targeting, and the campaign's **location options** — Google's
+"presence or interest" vs "presence" matching, as
+`--positive-geo-target-type` / `--negative-geo-target-type`. The App and
+Performance Max create commands do not take them; set them afterwards with
+`campaign update`.
+
 New campaigns, ad groups, and ads ship **PAUSED** by default.
 
 ## Guard rails

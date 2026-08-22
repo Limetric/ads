@@ -213,6 +213,6 @@ func addGoogleTools(reg *toolRegistrar, client *Client) {
 		runDraftCampaign)
 
 	addTool(reg, client, "update_campaign",
-		"Update a campaign's budget, bidding strategy, and/or geo/language targeting. Returns a preview + confirm token; pass Confirm to apply.",
+		"Update a campaign's budget, bidding strategy, geo/language targeting, and/or location options (positive/negative geo target type). Returns a preview + confirm token; pass Confirm to apply.",
 		runUpdateCampaign)
 }
