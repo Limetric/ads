@@ -68,51 +68,44 @@ non-interactive `--no-input` path for CI are in
 [`docs/google.md`](docs/google.md). Using Microsoft Advertising? Start at
 [`docs/bing.md`](docs/bing.md) — it differs in ways worth reading first.
 
+## Concepts
+
 ### Where the refresh token lives
 
-`ads login` saves the refresh token to a per-platform **token store** — one
-`0600` file per platform under `~/.config/ads/state/tokens/` — and not to
-`config.toml` or an environment variable. The store is writable, which is what
-lets ads keep working on platforms that issue a *new* refresh token on every
-refresh and invalidate the old one; a token pinned in an env var would work
-exactly once there.
+`ads login` writes the refresh token to a per-platform **token store**
+(`0600` files under `~/.config/ads/state/tokens/`), never to `config.toml` or
+an env var — it's writable so ads keeps working on platforms that rotate the
+refresh token on every use.
 
 ```bash
-ads doctor google        # where the store is, whether it's writable, how old the sign-in is
-export GOADS_TOKEN_STORE=/path/to/tokens   # containers and CI: mount a writable volume here
+ads doctor google        # store location, writability, sign-in age
+export GOADS_TOKEN_STORE=/path/to/tokens   # containers/CI: mount a writable volume
 ```
 
-Each platform's guide covers the rest: deprecated env-var seeds, and running
-several sign-ins side by side.
+See each platform's guide for deprecated env-var seeds and running multiple
+sign-ins side by side.
 
 ### Defaults and output
 
-Work with one account most of the time? Set a default once and drop the
-per-command flag (any explicit flag still wins):
+Set a default account once and drop the per-command flag (an explicit flag
+still wins):
 
 ```bash
 ads config google set-customer 123-456-7890   # or: ads config bing set-account 123456789
-ads google campaigns                          # uses the default account
-ads config show                               # see the resolved config (secrets redacted)
+ads google campaigns                          # uses the default
+ads config show                               # resolved config, secrets redacted
 ```
 
-Read commands print JSON by default; pass `--format table` or `--format csv`
-for human- or spreadsheet-friendly output (`campaigns`, `ads`, `keywords …`,
-`search`, `report`, and the other row-returning reads all take it):
+Reads print JSON by default; add `--format table` or `--format csv` for
+human- or spreadsheet-friendly output:
 
 ```bash
 ads google campaigns --format table
 ```
 
-The human-facing commands — `login`, `doctor`, `config show` — colour their
-output when they are writing to a terminal, and print plain text whenever they
-are not (a pipe, a redirect, CI). To turn it off explicitly, pass `--no-color`
-or set `NO_COLOR`; to keep it through a pager, set `CLICOLOR_FORCE=1`:
-
-```bash
-ads doctor --no-color            # plain text on a terminal
-CLICOLOR_FORCE=1 ads doctor | less -R
-```
+`login`, `doctor`, and `config show` colour their output on a terminal and
+print plain text otherwise. Force it either way with `--no-color`/`NO_COLOR`
+or `CLICOLOR_FORCE=1`.
 
 ### Writes preview first
 
@@ -120,18 +113,14 @@ Every mutation previews first and applies only on confirm:
 
 ```bash
 ads google budget set --budget-id 555 --amount-micros 5000000
-# → prints a preview and a confirm token, e.g. a1b2c3d4e5f6a7b8
-ads confirm a1b2c3d4e5f6a7b8   # applies the staged change as previewed
+# → preview + confirm token, e.g. a1b2c3d4e5f6a7b8
+ads confirm a1b2c3d4e5f6a7b8   # applies it (or re-run with --confirm <token>)
 ads audit                      # log of every write ads has applied
 ```
 
-(Re-running the original command with `--confirm <token>` still works too.)
-
-Beyond the confirm flow: a client-side allow-list rejects invalid mutation
-operation keys, guard rails (spend cap, bid-increase limit, blocked-op list)
-bound every write across platforms, and new campaigns, ad groups, and ads ship
-**PAUSED** by default. See [`docs/google.md`](docs/google.md#guard-rails) for the
-thresholds and their defaults.
+Guard rails (spend cap, bid-increase limit, blocked-op list) bound every
+write, and new campaigns/ad groups/ads ship **PAUSED** by default — see
+[`docs/google.md`](docs/google.md#guard-rails) for thresholds.
 
 ## As an MCP server
 
