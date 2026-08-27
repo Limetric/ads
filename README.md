@@ -68,6 +68,39 @@ non-interactive `--no-input` path for CI are in
 [`docs/google.md`](docs/google.md). Using Microsoft Advertising? Start at
 [`docs/bing.md`](docs/bing.md) — it differs in ways worth reading first.
 
+## Integrations
+
+### As an MCP server
+
+`ads mcp` serves the same tools over stdio to MCP hosts, under their platform
+prefix — `google_search`, `google_campaigns`, `google_set_campaign_budget`, …
+See [`docs/mcp.md`](docs/mcp.md) for host config and credentials.
+
+### As a Claude Code plugin
+
+The repo bundles a skill (`plugins/ads/skills/ads/SKILL.md`, symlinked at
+`.claude/skills/ads` for contributors working in a clone) that teaches an agent
+when and how to drive the CLI — token-efficient because nothing loads until it's
+relevant, and big result sets stay in the shell (`| jq`) instead of the context
+window.
+
+If you installed `ads` via Homebrew and don't have the repo cloned, install the
+skill as a Claude Code plugin instead:
+
+```text
+/plugin marketplace add Limetric/goads
+/plugin install ads@goads
+```
+
+### As a Codex plugin
+
+Codex reads the same skill through its own plugin manifest:
+
+```bash
+codex plugin marketplace add Limetric/goads
+codex plugin add ads@goads
+```
+
 ## Concepts
 
 ### Where the refresh token lives
@@ -121,53 +154,6 @@ ads audit                      # log of every write ads has applied
 Guard rails (spend cap, bid-increase limit, blocked-op list) bound every
 write, and new campaigns/ad groups/ads ship **PAUSED** by default — see
 [`docs/google.md`](docs/google.md#guard-rails) for thresholds.
-
-## As an MCP server
-
-`ads mcp` serves the same tools over stdio to MCP hosts, under their platform
-prefix — `google_search`, `google_campaigns`, `google_set_campaign_budget`, …
-See [`docs/mcp.md`](docs/mcp.md) for host config and credentials.
-
-## As a Claude Code skill
-
-The repo bundles a skill (`plugins/ads/skills/ads/SKILL.md`, symlinked at
-`.claude/skills/ads` for contributors working in a clone) that teaches an agent
-when and how to drive the CLI — token-efficient because nothing loads until it's
-relevant, and big result sets stay in the shell (`| jq`) instead of the context
-window.
-
-If you installed `ads` via Homebrew and don't have the repo cloned, install the
-skill as a Claude Code plugin instead:
-
-```text
-/plugin marketplace add Limetric/goads
-/plugin install ads@goads
-```
-
-## As a Codex plugin
-
-Codex reads the same skill through its own plugin manifest:
-
-```bash
-codex plugin marketplace add Limetric/goads
-codex plugin add ads@goads
-```
-
-## Shell completion
-
-Homebrew installs completions automatically. For a manual install, `ads
-completion` generates the script for your shell:
-
-```bash
-# bash (requires bash-completion)
-ads completion bash > /usr/local/etc/bash_completion.d/ads
-
-# zsh
-ads completion zsh > "${fpath[1]}/_ads"
-
-# fish
-ads completion fish > ~/.config/fish/completions/ads.fish
-```
 
 See [`AGENTS.md`](AGENTS.md) for the contributor workflow and conventions.
 
