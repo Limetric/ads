@@ -1,6 +1,6 @@
 # ads
 
-[![CI](https://github.com/Limetric/goads/actions/workflows/ci.yml/badge.svg)](https://github.com/Limetric/goads/actions/workflows/ci.yml)
+[![CI](https://github.com/Limetric/ads/actions/workflows/ci.yml/badge.svg)](https://github.com/Limetric/ads/actions/workflows/ci.yml)
 
 **Ad platform management — a Go CLI and MCP server.**
 
@@ -44,7 +44,7 @@ Three ways in, no wrong answer:
   ```
 
 - **Prebuilt binary** (macOS, Linux, Windows) — grab one from the
-  [releases page](https://github.com/Limetric/goads/releases/latest).
+  [releases page](https://github.com/Limetric/ads/releases/latest).
 
 - **Build from source**:
 
@@ -88,8 +88,8 @@ If you installed `ads` via Homebrew and don't have the repo cloned, install the
 skill as a Claude Code plugin instead:
 
 ```text
-/plugin marketplace add Limetric/goads
-/plugin install ads@goads
+/plugin marketplace add Limetric/ads
+/plugin install ads@ads
 ```
 
 ### As a Codex plugin
@@ -97,8 +97,8 @@ skill as a Claude Code plugin instead:
 Codex reads the same skill through its own plugin manifest:
 
 ```bash
-codex plugin marketplace add Limetric/goads
-codex plugin add ads@goads
+codex plugin marketplace add Limetric/ads
+codex plugin add ads@ads
 ```
 
 ## Concepts

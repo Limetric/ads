@@ -1,7 +1,7 @@
 {
-  "name": "goads",
+  "name": "ads",
   "interface": {
-    "displayName": "goads"
+    "displayName": "ads"
   },
   "plugins": [
     {
