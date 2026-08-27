@@ -13,3 +13,6 @@ credentials.json
 
 # `go build ./...` drops a binary named after the module here
 /goads
+
+# Diff scaffolding written by the automated PR review workflows
+.review-scope/
