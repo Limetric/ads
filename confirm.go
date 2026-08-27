@@ -97,7 +97,9 @@ var confirmCmd = &cobra.Command{
 		}
 		// The hint goes to stderr so stdout stays valid JSON for jq pipelines.
 		if !res.Applied && res.Token != "" {
-			fmt.Fprintf(cmd.ErrOrStderr(), "Second confirmation required: ads confirm %s\n", res.Token)
+			errOut := cmd.ErrOrStderr()
+			st := newStyles(errOut)
+			fmt.Fprintf(errOut, "%s %s\n", st.warning("Second confirmation required:"), st.accent("ads confirm "+res.Token))
 		}
 		return nil
 	},

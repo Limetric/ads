@@ -570,5 +570,7 @@ func warnOnce(format string, args ...any) {
 	warned[msg] = true
 	w := warnWriter
 	warnedMu.Unlock()
-	fmt.Fprintln(w, "warning: "+msg)
+	// Only the prefix is coloured: these notices are long, and a whole
+	// paragraph in yellow is harder to read than the sentence it interrupts.
+	fmt.Fprintln(w, newStyles(w).warning("warning:")+" "+msg)
 }

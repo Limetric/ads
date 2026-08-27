@@ -45,9 +45,10 @@ var doctorCmd = &cobra.Command{
 		}
 
 		out := cmd.OutOrStdout()
+		st := newStyles(out)
 		defer func() {
 			for _, name := range skipped {
-				fmt.Fprintf(out, "\nskipped %s — not configured. Run `ads doctor %s` to see what it needs.\n", name, name)
+				fmt.Fprintf(out, "\n%s\n", st.muted(fmt.Sprintf("skipped %s — not configured. Run `ads doctor %s` to see what it needs.", name, name)))
 			}
 		}()
 		var worst *platformVerdict
@@ -56,10 +57,10 @@ var doctorCmd = &cobra.Command{
 				fmt.Fprintln(out)
 			}
 			if len(targets) > 1 {
-				fmt.Fprintf(out, "=== %s (%s) ===\n", p.Title, p.Name)
+				fmt.Fprintln(out, st.header(fmt.Sprintf("=== %s (%s) ===", p.Title, p.Name)))
 			}
 			res, err := p.Doctor(cmd.Context(), out, doctorOffline)
-			fmt.Fprint(out, statusLine(res, err))
+			fmt.Fprint(out, statusLine(st, res, err))
 			if worst == nil || res.worseThan(worst.result) {
 				worst = &platformVerdict{result: res, err: err}
 			}
@@ -127,19 +128,24 @@ const (
 // worst outcome. The iota order is already severity order.
 func (r liveResult) worseThan(other liveResult) bool { return r > other }
 
-// statusLine renders the verdict a platform's doctor reached.
-func statusLine(res liveResult, err error) string {
+// statusLine renders the verdict a platform's doctor reached. The verdict word
+// carries the colour — green ready, yellow inconclusive, red not ready — so the
+// outcome is legible before the sentence explaining it is read.
+func statusLine(st styles, res liveResult, err error) string {
+	line := func(verdict, rest string) string {
+		return fmt.Sprintf("\n%s %s%s\n", st.muted("status:"), verdict, rest)
+	}
 	switch res {
 	case liveOK:
-		return "\nstatus: ready (live check passed)\n"
+		return line(st.success("ready"), " (live check passed)")
 	case liveOffline:
-		return "\nstatus: ready — credentials resolve (offline check). Run `ads doctor` to verify against the API.\n"
+		return line(st.success("ready"), " — credentials resolve (offline check). Run `ads doctor` to verify against the API.")
 	case liveUnconfigured:
-		return fmt.Sprintf("\nstatus: NOT READY — %v\n", err)
+		return line(st.failure("NOT READY"), fmt.Sprintf(" — %v", err))
 	case liveInconclusive:
-		return "\nstatus: INCONCLUSIVE — credentials resolve, but the API couldn't be reached (network/transient). Setup unconfirmed, not necessarily broken.\n"
+		return line(st.warning("INCONCLUSIVE"), " — credentials resolve, but the API couldn't be reached (network/transient). Setup unconfirmed, not necessarily broken.")
 	default: // liveFailed
-		return "\nstatus: NOT READY — the API rejected the request (see above)\n"
+		return line(st.failure("NOT READY"), " — the API rejected the request (see above)")
 	}
 }
 
@@ -177,18 +183,37 @@ func liveVerdictFor(err error) liveResult {
 	return liveInconclusive
 }
 
-// reportProbe prints a failed probe line — ✗ for a definitive failure, ? for an
-// inconclusive one — and returns the classification. label should be padded to
-// align with the ✓ lines (a trailing space follows the marker).
-func reportProbe(out io.Writer, label string, err error) liveResult {
+// doctorFieldWidth is the column doctor's credential summary lines its values
+// up in; probeLabelWidth is the column the probe markers (✓, ✗, ?) start in, so
+// they line up down the report whichever way each probe went.
+const (
+	doctorFieldWidth = 20
+	probeLabelWidth  = 22
+)
+
+// probeOK prints a passing probe line: a green ✓ and what the probe found.
+func probeOK(out io.Writer, st styles, label, format string, args ...any) {
+	fmt.Fprintf(out, "%s%s %s\n", st.field(label, probeLabelWidth), st.success("✓"), fmt.Sprintf(format, args...))
+}
+
+// probeSkipped prints a probe that had no reason to run — not a failure, so it
+// is dimmed rather than marked.
+func probeSkipped(out io.Writer, st styles, label, reason string) {
+	fmt.Fprintf(out, "%s%s\n", st.field(label, probeLabelWidth), st.muted("skipped ("+reason+")"))
+}
+
+// reportProbe prints a failed probe line — a red ✗ for a definitive failure, a
+// yellow ? for an inconclusive one — and returns the classification. label is
+// the bare probe name; the marker column is applied here.
+func reportProbe(out io.Writer, st styles, label string, err error) liveResult {
 	verdict := liveVerdictFor(err)
-	marker := "?"
+	marker := st.warning("?")
 	prefix := "could not reach the API: "
 	if verdict == liveFailed {
-		marker = "✗"
+		marker = st.failure("✗")
 		prefix = ""
 	}
-	fmt.Fprintf(out, "%s %s %s%v\n", label, marker, prefix, err)
+	fmt.Fprintf(out, "%s%s %s%v\n", st.field(label, probeLabelWidth), marker, prefix, err)
 	return verdict
 }
 

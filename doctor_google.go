@@ -41,14 +41,16 @@ func googleDoctor(ctx context.Context, out io.Writer, offline bool) (liveResult,
 		return liveUnconfigured, err
 	}
 	store := describeTokenStore(googleTokenPolicy.Platform)
-	fmt.Fprintf(out, "base URL:           %s\n", cfg.BaseURL)
-	fmt.Fprintf(out, "developer token:    %s\n", present(cfg.DeveloperToken))
-	fmt.Fprintf(out, "client id:          %s\n", present(cfg.ClientID))
-	fmt.Fprintf(out, "client secret:      %s\n", present(cfg.ClientSecret))
-	fmt.Fprintf(out, "token store:        %s\n", store.location())
-	fmt.Fprintf(out, "saved sign-in:      %s\n", googleSignInReport(cfg, store))
-	fmt.Fprintf(out, "login customer id:  %s\n", orNone(cfg.LoginCustomerID))
-	fmt.Fprintf(out, "default customer:   %s\n", orNone(cfg.DefaultCustomerID))
+	st := newStyles(out)
+	field := func(label, value string) { fmt.Fprintf(out, "%s%s\n", st.field(label, doctorFieldWidth), value) }
+	field("base URL", cfg.BaseURL)
+	field("developer token", st.presence(cfg.DeveloperToken))
+	field("client id", st.presence(cfg.ClientID))
+	field("client secret", st.presence(cfg.ClientSecret))
+	field("token store", store.location())
+	field("saved sign-in", googleSignInReport(cfg, store))
+	field("login customer id", st.optional(cfg.LoginCustomerID))
+	field("default customer", st.optional(cfg.DefaultCustomerID))
 	if err := cfg.validate(); err != nil {
 		return liveUnconfigured, err
 	}
@@ -56,7 +58,7 @@ func googleDoctor(ctx context.Context, out io.Writer, offline bool) (liveResult,
 		return liveOffline, nil
 	}
 	fmt.Fprintln(out)
-	return runGoogleDoctorLive(ctx, out, cfg)
+	return runGoogleDoctorLive(ctx, out, st, cfg)
 }
 
 // runGoogleDoctorLive makes real API calls to prove the setup works, printing a
@@ -73,30 +75,30 @@ func googleDoctor(ctx context.Context, out io.Writer, offline bool) (liveResult,
 //
 // It returns the verdict of the first probe that doesn't pass, so the caller can
 // set the status line and exit code.
-func runGoogleDoctorLive(ctx context.Context, out io.Writer, cfg *GoogleConfig) (liveResult, error) {
+func runGoogleDoctorLive(ctx context.Context, out io.Writer, st styles, cfg *GoogleConfig) (liveResult, error) {
 	client, err := NewClient(ctx, cfg)
 	if err != nil {
-		return reportProbe(out, "client:              ", err), err
+		return reportProbe(out, st, "client", err), err
 	}
 
 	ids, err := client.ListAccessibleCustomers(ctx)
 	if err != nil {
-		return reportProbe(out, "accessible accounts: ", err), err
+		return reportProbe(out, st, "accessible accounts", err), err
 	}
 	dashed := make([]string, len(ids))
 	for i, id := range ids {
 		dashed[i] = dashCustomerID(id)
 	}
-	fmt.Fprintf(out, "accessible accounts:  ✓ %d (%s)\n", len(ids), strings.Join(dashed, ", "))
+	probeOK(out, st, "accessible accounts", "%d (%s)", len(ids), strings.Join(dashed, ", "))
 
 	if cfg.LoginCustomerID == "" {
-		fmt.Fprintf(out, "live query:           skipped (no login_customer_id set)\n")
+		probeSkipped(out, st, "live query", "no login_customer_id set")
 		return liveOK, nil
 	}
 	res, err := runAccounts(ctx, client, AccountsArgs{})
 	if err != nil {
-		return reportProbe(out, "live query:          ", err), err
+		return reportProbe(out, st, "live query", err), err
 	}
-	fmt.Fprintf(out, "live query:           ✓ %d account(s) reachable under %s\n", len(res.CustomerIDs), dashCustomerID(cfg.LoginCustomerID))
+	probeOK(out, st, "live query", "%d account(s) reachable under %s", len(res.CustomerIDs), dashCustomerID(cfg.LoginCustomerID))
 	return liveOK, nil
 }

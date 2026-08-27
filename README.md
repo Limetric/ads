@@ -105,6 +105,16 @@ for human- or spreadsheet-friendly output (`campaigns`, `ads`, `keywords …`,
 ads google campaigns --format table
 ```
 
+The human-facing commands — `login`, `doctor`, `config show` — colour their
+output when they are writing to a terminal, and print plain text whenever they
+are not (a pipe, a redirect, CI). To turn it off explicitly, pass `--no-color`
+or set `NO_COLOR`; to keep it through a pager, set `CLICOLOR_FORCE=1`:
+
+```bash
+ads doctor --no-color            # plain text on a terminal
+CLICOLOR_FORCE=1 ads doctor | less -R
+```
+
 ### Writes preview first
 
 Every mutation previews first and applies only on confirm:

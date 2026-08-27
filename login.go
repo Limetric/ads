@@ -376,8 +376,10 @@ var googleLoginCmd = &cobra.Command{
 			}
 			openFn := openBrowser
 			if loginNoBrowser {
+				out := cmd.OutOrStdout()
+				st := newStyles(out)
 				openFn = func(u string) error {
-					fmt.Fprintf(cmd.OutOrStdout(), "Open this URL:\n  %s\n", u)
+					fmt.Fprintf(out, "Open this URL:\n  %s\n", st.url(u))
 					return nil
 				}
 			}
@@ -395,17 +397,18 @@ var googleLoginCmd = &cobra.Command{
 			return err
 		}
 		out := cmd.OutOrStdout()
-		fmt.Fprintln(out, "=== Google Ads OAuth2 sign-in ===")
+		st := newStyles(out)
+		fmt.Fprintln(out, st.header("=== Google Ads OAuth2 sign-in ==="))
 
 		refreshToken := creds.refreshToken
 		if creds.kind == "authorized_user" {
 			if refreshToken == "" {
 				return errors.New("authorized_user credentials file has no refresh_token")
 			}
-			fmt.Fprintln(out, "Credentials file already contains a refresh token; skipping browser sign-in.")
+			fmt.Fprintln(out, st.muted("Credentials file already contains a refresh token; skipping browser sign-in."))
 		} else {
 			if creds.kind == "web" {
-				fmt.Fprintln(out, "Warning: this is a Web-application client; loopback sign-in expects a Desktop-app client. Trying anyway.")
+				fmt.Fprintln(out, st.warning("Warning: this is a Web-application client; loopback sign-in expects a Desktop-app client. Trying anyway."))
 			}
 			conf := &oauth2.Config{
 				ClientID:     creds.clientID,
@@ -424,19 +427,19 @@ var googleLoginCmd = &cobra.Command{
 				// must not abort the login — fall back to printing the URL,
 				// like the wizard path does (issue #11).
 				if err := openBrowser(u); err != nil {
-					fmt.Fprintf(out, "Could not open a browser (%v).\nOpen this URL manually:\n  %s\n", err, u)
+					fmt.Fprintf(out, "%s\nOpen this URL manually:\n  %s\n", st.warning(fmt.Sprintf("Could not open a browser (%v).", err)), st.url(u))
 				}
 				return nil
 			}
 			if loginNoBrowser {
 				openFn = func(u string) error {
-					fmt.Fprintf(out, "Open this URL in your browser:\n  %s\n", u)
+					fmt.Fprintf(out, "Open this URL in your browser:\n  %s\n", st.url(u))
 					return nil
 				}
 			} else {
-				fmt.Fprintln(out, "Opening browser for Google sign-in…")
+				fmt.Fprintln(out, st.muted("Opening browser for Google sign-in…"))
 			}
-			fmt.Fprintf(out, "Waiting for callback on %s …\n", loopbackRedirectURL(loginPort))
+			fmt.Fprintln(out, st.muted("Waiting for callback on "+loopbackRedirectURL(loginPort)+" …"))
 			code, err := runLoopbackOAuth(cmd.Context(), conf, openFn, ln)
 			if err != nil {
 				return err
@@ -445,7 +448,7 @@ var googleLoginCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
-			fmt.Fprintln(out, "✓ Authorized. Exchanged code for refresh token.")
+			fmt.Fprintf(out, "%s Authorized. Exchanged code for refresh token.\n", st.success("✓"))
 		}
 
 		target, err := configWriteTarget(configPath)
@@ -455,9 +458,9 @@ var googleLoginCmd = &cobra.Command{
 		if err := saveGoogleCredentials(target, creds, refreshToken); err != nil {
 			return err
 		}
-		fmt.Fprintf(out, "✓ Wrote credentials to %s\n", target)
-		printGoogleHandoff(out, creds)
-		fmt.Fprintln(out, "Run `ads doctor google` to verify. (developer token still required.)")
+		fmt.Fprintf(out, "%s Wrote credentials to %s\n", st.success("✓"), st.muted(target))
+		printGoogleHandoff(out, st, creds)
+		fmt.Fprintf(out, "Run %s to verify. %s\n", st.accent("`ads doctor google`"), st.muted("(developer token still required.)"))
 		return nil
 	},
 }
@@ -466,15 +469,15 @@ var googleLoginCmd = &cobra.Command{
 // host. It deliberately does not print the refresh token: pasting one into an
 // environment variable is the pattern the token store exists to end, and it
 // stops working outright on a platform that rotates its refresh tokens.
-func printGoogleHandoff(out io.Writer, c clientCreds) {
-	fmt.Fprintln(out, "\nFor CI / MCP hosts, set:")
+func printGoogleHandoff(out io.Writer, st styles, c clientCreds) {
+	fmt.Fprintln(out, "\n"+st.accent("For CI / MCP hosts, set:"))
 	fmt.Fprintln(out, "  export GOOGLE_ADS_DEVELOPER_TOKEN=\"…\"")
 	fmt.Fprintf(out, "  export GOOGLE_ADS_CLIENT_ID=%q\n", c.clientID)
 	fmt.Fprintf(out, "  export GOOGLE_ADS_CLIENT_SECRET=%q\n", c.clientSecret)
 	if path, err := tokenStorePath(googleTokenPolicy.Platform); err == nil {
-		fmt.Fprintln(out, "\nThe refresh token lives in the token store:")
+		fmt.Fprintln(out, "\n"+st.accent("The refresh token lives in the token store:"))
 		fmt.Fprintf(out, "  %s\n", path)
-		fmt.Fprintln(out, "Mount or copy it, and point ads at it with:")
+		fmt.Fprintln(out, st.muted("Mount or copy it, and point ads at it with:"))
 		fmt.Fprintf(out, "  export %s=\"/path/to/tokens\"\n", tokenStoreEnv)
 	}
 	fmt.Fprintln(out)

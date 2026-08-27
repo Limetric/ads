@@ -27,7 +27,8 @@ var configPathCmd = &cobra.Command{
 			return fmt.Errorf("resolve config path: %w", err)
 		}
 		if resolved == "" {
-			fmt.Fprintln(cmd.OutOrStdout(), "environment only (no config file)")
+			out := cmd.OutOrStdout()
+			fmt.Fprintln(out, newStyles(out).muted("environment only (no config file)"))
 			return nil
 		}
 		fmt.Fprintln(cmd.OutOrStdout(), resolved)
@@ -48,17 +49,18 @@ var configShowCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("resolve config path: %w", err)
 		}
+		out := cmd.OutOrStdout()
+		st := newStyles(out)
 		source := resolved
 		if source == "" {
-			source = "(none — environment only)"
+			source = st.muted("(none — environment only)")
 		}
-		out := cmd.OutOrStdout()
-		fmt.Fprintf(out, "config file:          %s\n", source)
+		fmt.Fprintf(out, "%s%s\n", st.field("config file", configFieldWidth), source)
 		for _, p := range platforms() {
 			if p.ShowConfig == nil {
 				continue
 			}
-			fmt.Fprintf(out, "\n[%s] %s\n", p.Name, p.Title)
+			fmt.Fprintf(out, "\n%s\n", st.header(fmt.Sprintf("[%s] %s", p.Name, p.Title)))
 			if err := p.ShowConfig(out); err != nil {
 				return err
 			}
@@ -204,6 +206,10 @@ func isAssignmentTo(line, key string) bool {
 	}
 	return false
 }
+
+// configFieldWidth is the column `ads config show` lines its values up in,
+// shared by every platform's section so the report reads as one table.
+const configFieldWidth = 22
 
 // redactSecret renders a credential for display without exposing it; the last
 // four characters are kept so two credentials can be told apart.

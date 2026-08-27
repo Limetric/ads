@@ -1270,7 +1270,7 @@ func TestSaveBingCredentials_NeverOverwritesTheDeveloperToken(t *testing.T) {
 func TestBingDeveloperTokenReport_FlagsTheSandboxTokenInProduction(t *testing.T) {
 	// The reachable mismatch: a sandbox token configured against production.
 	// The reverse cannot survive load, since the sandbox applies its own.
-	got := bingDeveloperTokenReport(&BingConfig{DeveloperToken: bingSandboxDeveloperToken, Environment: bingEnvProduction})
+	got := bingDeveloperTokenReport(styles{}, &BingConfig{DeveloperToken: bingSandboxDeveloperToken, Environment: bingEnvProduction})
 	if !strings.Contains(got, "SANDBOX") {
 		t.Errorf("report = %q, want it to flag the mismatch", got)
 	}

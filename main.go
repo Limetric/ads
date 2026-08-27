@@ -58,6 +58,7 @@ func init() {
 	rootCmd.Version = versionString()
 	rootCmd.SetVersionTemplate("{{.Version}}\n")
 	rootCmd.PersistentFlags().StringVar(&configPath, "config", "", "path to TOML credentials/settings file (env overrides)")
+	rootCmd.PersistentFlags().BoolVar(&noColor, "no-color", false, "disable coloured output (also honours NO_COLOR)")
 
 	versionCmd.Flags().BoolVarP(&versionVerbose, "verbose", "v", false, "print detailed build metadata")
 	doctorCmd.Flags().BoolVar(&doctorOffline, "offline", false, "skip the live API check; only verify that credentials resolve")
