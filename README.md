@@ -37,16 +37,20 @@ variables, tool coverage, and troubleshooting.
 
 Three ways in, no wrong answer:
 
-```bash
-# Homebrew (macOS/Linux)
-brew install Limetric/tap/ads
+- **Homebrew** (macOS/Linux):
 
-# Prebuilt binary (macOS, Linux, Windows) — grab one from the releases page
-open https://github.com/Limetric/goads/releases/latest
+  ```bash
+  brew install Limetric/tap/ads
+  ```
 
-# Build from source
-go build -o build/ads .
-```
+- **Prebuilt binary** (macOS, Linux, Windows) — grab one from the
+  [releases page](https://github.com/Limetric/goads/releases/latest).
+
+- **Build from source**:
+
+  ```bash
+  go build -o build/ads .
+  ```
 
 ## Quick start
 
