@@ -7,6 +7,9 @@ MCP servers, including the official one, only let an agent look — `ads` also
 lets it act: create a campaign, change a budget, adjust a bid, all through the
 same preview-then-confirm flow you'd use by hand. Google Ads and Microsoft
 Advertising (Bing Ads) are supported today, with more platforms on the way.
+And it's a direct line — `ads` talks straight to the Google Ads and Microsoft
+Advertising APIs from your own machine, with no relay server in between to
+see your data or credentials.
 
 It ships as a single binary with two front-ends over one shared set of tools:
 
