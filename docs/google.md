@@ -163,6 +163,32 @@ geo/language targeting, and the campaign's **location options** — Google's
 Performance Max create commands do not take them; set them afterwards with
 `campaign update`.
 
+### Portfolio (shared) bidding strategies
+
+`--bidding-strategy` sets a **standard** strategy, which each campaign learns on
+its own conversions. To pool volume across campaigns, create one portfolio
+strategy and attach each campaign to it with `--portfolio-strategy-id`:
+
+```bash
+ads google bidding create-strategy --name "Pooled tCPA" --type TARGET_CPA --target-cpa 35
+ads google bidding create-strategy … --confirm <token>   # returns resource_names
+
+# Attach — the ID or the whole resource name from above both work.
+ads google campaign update --campaign-id 111 --portfolio-strategy-id 9876543210
+ads google campaign update --campaign-id 111 --portfolio-strategy-id 9876543210 --confirm <token>
+```
+
+The targets live on the shared strategy, so `--target-cpa` / `--target-roas`
+are rejected alongside `--portfolio-strategy-id`; change the target on the
+strategy itself and every attached campaign moves together. Setting
+`--bidding-strategy` again moves the campaign back to a standard strategy.
+Strategies shared down from a manager account are attachable too. To list what
+is available:
+
+```bash
+ads google search --query "SELECT accessible_bidding_strategy.id, accessible_bidding_strategy.name, accessible_bidding_strategy.type FROM accessible_bidding_strategy"
+```
+
 New campaigns, ad groups, and ads ship **PAUSED** by default.
 
 ## Guard rails
