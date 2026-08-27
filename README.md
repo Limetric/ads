@@ -2,9 +2,11 @@
 
 **Your ad accounts, minus the dashboard-clicking.** `ads` is the CLI and MCP
 server that lets you (or your favorite AI agent) query campaigns, check spend,
-and ship budget changes without ever opening a browser tab. Google Ads and
-Microsoft Advertising (Bing Ads) are supported today, with more platforms on
-the way.
+and ship budget changes without ever opening a browser tab. Most Google Ads
+MCP servers, including the official one, only let an agent look — `ads` also
+lets it act: create a campaign, change a budget, adjust a bid, all through the
+same preview-then-confirm flow you'd use by hand. Google Ads and Microsoft
+Advertising (Bing Ads) are supported today, with more platforms on the way.
 
 It ships as a single binary with two front-ends over one shared set of tools:
 
