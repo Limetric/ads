@@ -124,35 +124,9 @@ write, and new campaigns/ad groups/ads ship **PAUSED** by default — see
 
 ## As an MCP server
 
-Point your MCP host at the binary. Tools are served under their platform
+`ads mcp` serves the same tools over stdio to MCP hosts, under their platform
 prefix — `google_search`, `google_campaigns`, `google_set_campaign_budget`, …
-
-```json
-{
-  "mcpServers": {
-    "ads": {
-      "command": "/path/to/build/ads",
-      "args": ["mcp"],
-      "env": {
-        "GOOGLE_ADS_DEVELOPER_TOKEN": "...",
-        "GOOGLE_ADS_CLIENT_ID": "...",
-        "GOOGLE_ADS_CLIENT_SECRET": "...",
-        "GOOGLE_ADS_LOGIN_CUSTOMER_ID": "..."
-      }
-    }
-  }
-}
-```
-
-Run `ads login google` once first: the refresh token comes from the token store,
-so it does not belong in the host config. Add `"GOADS_TOKEN_STORE": "..."` if the
-host runs somewhere `~/.config/ads` isn't writable.
-
-Add `BING_ADS_DEVELOPER_TOKEN`, `BING_ADS_CLIENT_ID`, and (optionally)
-`BING_ADS_CUSTOMER_ID` / `BING_ADS_ACCOUNT_ID` to serve `bing_…` tools as well,
-after `ads login bing`. A platform whose credentials don't resolve is skipped
-with a warning rather than taking the server down, so configuring one network is
-fine.
+See [`docs/mcp.md`](docs/mcp.md) for host config and credentials.
 
 ## As a Claude Code skill
 
