@@ -2,10 +2,13 @@
 
 [![CI](https://github.com/Limetric/ads/actions/workflows/ci.yml/badge.svg)](https://github.com/Limetric/ads/actions/workflows/ci.yml)
 
-**Ad platform management — a Go CLI and MCP server.**
+**Your ad accounts, minus the dashboard-clicking.** `ads` is the CLI and MCP
+server that lets you (or your favorite AI agent) query campaigns, check spend,
+and ship budget changes without ever opening a browser tab. Google Ads and
+Microsoft Advertising (Bing Ads) are supported today, with more platforms on
+the way.
 
-It talks to ad platform **REST APIs** (no gRPC, no protobuf codegen), and ships
-as a single binary with two front-ends over one shared set of tools:
+It ships as a single binary with two front-ends over one shared set of tools:
 
 - **CLI** — `ads google search …`, `ads google accounts`, `ads google budget set …`.
   Scriptable, pipeable into `jq`, usable in CI. This is what the bundled agent
