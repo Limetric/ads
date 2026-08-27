@@ -33,35 +33,30 @@ Each guide covers that platform's prerequisites, sign-in, environment
 variables, tool coverage, and troubleshooting.
 [`docs/name-map.md`](docs/name-map.md) is the full CLI ↔ MCP name map.
 
+## Install
+
+Three ways in, no wrong answer:
+
+```bash
+# Homebrew (macOS/Linux)
+brew install Limetric/tap/ads
+
+# Prebuilt binary (macOS, Linux, Windows) — grab one from the releases page
+open https://github.com/Limetric/goads/releases/latest
+
+# Build from source
+go build -o build/ads .
+```
+
 ## Quick start
 
-On macOS and Linux, install `ads` from the Limetric Homebrew tap:
-
 ```bash
-brew install Limetric/tap/ads
-```
-
-The fastest way to get set up is the guided sign-in — it walks you through the
-prerequisites, signs you in via the browser, and verifies the connection:
-
-```bash
-ads login google      # interactive: guides you from scratch (or just re-signs in), then verifies
-ads doctor            # verify credentials resolve (every configured platform)
+ads login google      # guided sign-in, verifies the connection
+ads doctor            # confirm credentials resolve
 ads google accounts   # list accessible accounts
-```
 
-Then run your first query:
-
-```bash
 ads google search --customer-id 123-456-7890 \
   --query 'SELECT campaign.id, campaign.name FROM campaign LIMIT 10' | jq
-```
-
-Building from source instead of Homebrew:
-
-```bash
-go mod tidy
-go build -o build/ads .
 ```
 
 Google's prerequisites (Cloud project, OAuth client, developer token) and the
