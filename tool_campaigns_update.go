@@ -161,6 +161,92 @@ func resolveCampaignBiddingStrategy(ctx context.Context, c *Client, customerID, 
 	return state.Type, nil
 }
 
+// portfolioStrategyInfo describes a portfolio (shared) bidding strategy the
+// campaign's account can attach to — either one it owns or one shared down from
+// its manager, which is why the owner's customer ID is part of the answer: the
+// resource name a campaign links to carries the *owner's* ID, not the
+// campaign's.
+type portfolioStrategyInfo struct {
+	ID              string
+	Name            string
+	Type            string
+	OwnerCustomerID string
+}
+
+// resourceName is the value campaign.bidding_strategy takes.
+func (p portfolioStrategyInfo) resourceName() string {
+	return fmt.Sprintf("customers/%s/biddingStrategies/%s", p.OwnerCustomerID, p.ID)
+}
+
+// parsePortfolioStrategyID accepts either a plain numeric strategy ID or the
+// full resource name create_portfolio_bidding_strategy hands back in
+// resource_names, so an agent can pass that value straight through.
+func parsePortfolioStrategyID(value string) (string, error) {
+	id := strings.TrimSpace(value)
+	if strings.Contains(id, "/") {
+		if !strings.Contains(id, "/biddingStrategies/") {
+			return "", fmt.Errorf("portfolio_strategy_id %q is not a bidding strategy resource name — pass the numeric ID or customers/<customer_id>/biddingStrategies/<id>", value)
+		}
+		id = id[strings.LastIndex(id, "/")+1:]
+	}
+	return numericID("portfolio_strategy_id", id)
+}
+
+// int64String renders a REST int64 field — serialized as a JSON string, though
+// a bare number is tolerated — as a plain decimal string.
+func int64String(v any) string {
+	switch v := v.(type) {
+	case string:
+		return v
+	case float64:
+		return strconv.FormatInt(int64(v), 10)
+	default:
+		return ""
+	}
+}
+
+// fetchPortfolioStrategy resolves a portfolio strategy ID that the given
+// customer can actually use. accessible_bidding_strategy (rather than
+// bidding_strategy) is queried because a manager account's shared strategies
+// are attachable by its child accounts but do not appear in the child's own
+// bidding_strategy list.
+func fetchPortfolioStrategy(ctx context.Context, c *Client, customerID, strategyID string) (portfolioStrategyInfo, error) {
+	if c == nil {
+		return portfolioStrategyInfo{}, fmt.Errorf("could not resolve portfolio bidding strategy %s: Google Ads client is unavailable", strategyID)
+	}
+	q := fmt.Sprintf("SELECT accessible_bidding_strategy.id, accessible_bidding_strategy.name, accessible_bidding_strategy.type, accessible_bidding_strategy.owner_customer_id FROM accessible_bidding_strategy WHERE accessible_bidding_strategy.id = %s", strategyID)
+	rows, err := c.Search(ctx, customerID, q)
+	if err != nil {
+		return portfolioStrategyInfo{}, fmt.Errorf("could not resolve portfolio bidding strategy %s: %w", strategyID, err)
+	}
+	if len(rows) == 0 {
+		return portfolioStrategyInfo{}, fmt.Errorf("no portfolio bidding strategy with ID %s is accessible from customer %s — create one with create_portfolio_bidding_strategy, or list the existing ones with: ads google search --query \"SELECT accessible_bidding_strategy.id, accessible_bidding_strategy.name, accessible_bidding_strategy.type FROM accessible_bidding_strategy\"", strategyID, customerID)
+	}
+	var row struct {
+		AccessibleBiddingStrategy struct {
+			ID              any    `json:"id"`
+			Name            string `json:"name"`
+			Type            string `json:"type"`
+			OwnerCustomerID any    `json:"ownerCustomerId"`
+		} `json:"accessibleBiddingStrategy"`
+	}
+	if err := json.Unmarshal(rows[0], &row); err != nil {
+		return portfolioStrategyInfo{}, fmt.Errorf("could not decode portfolio bidding strategy %s: %w", strategyID, err)
+	}
+	owner := int64String(row.AccessibleBiddingStrategy.OwnerCustomerID)
+	if owner == "" {
+		// Older responses may omit the owner; the strategy is then the
+		// customer's own.
+		owner = customerID
+	}
+	return portfolioStrategyInfo{
+		ID:              strategyID,
+		Name:            row.AccessibleBiddingStrategy.Name,
+		Type:            row.AccessibleBiddingStrategy.Type,
+		OwnerCustomerID: owner,
+	}, nil
+}
+
 func biddingStrategyAllowsEmptyUpdate(strategy string) bool {
 	switch strategy {
 	case "MAXIMIZE_CONVERSIONS", "MAXIMIZE_CONVERSION_VALUE", "MANUAL_CPC", "TARGET_SPEND", "MAXIMIZE_CLICKS", "PERCENT_CPC":
@@ -214,14 +300,17 @@ func resolveCampaignBudgetResource(ctx context.Context, c *Client, customerID, c
 // UpdateCampaignArgs updates an existing campaign's settings. Only the provided
 // fields change; at least one change must be specified.
 type UpdateCampaignArgs struct {
-	CustomerID      string   `json:"customer_id,omitempty" jsonschema:"the Google Ads customer ID that owns the campaign; omit to use the configured default customer"`
-	CampaignID      string   `json:"campaign_id" jsonschema:"the campaign ID to update"`
-	BiddingStrategy string   `json:"bidding_strategy,omitempty" jsonschema:"new bidding strategy, e.g. MAXIMIZE_CONVERSIONS"`
-	TargetCPA       float64  `json:"target_cpa,omitempty" jsonschema:"target CPA in currency units"`
-	TargetROAS      float64  `json:"target_roas,omitempty" jsonschema:"target ROAS ratio"`
-	DailyBudget     float64  `json:"daily_budget,omitempty" jsonschema:"new daily budget in currency units (capped by the budget guard)"`
-	GeoTargetIDs    []string `json:"geo_target_ids,omitempty" jsonschema:"geo target constant IDs to add"`
-	LanguageIDs     []string `json:"language_ids,omitempty" jsonschema:"language constant IDs to add"`
+	CustomerID      string `json:"customer_id,omitempty" jsonschema:"the Google Ads customer ID that owns the campaign; omit to use the configured default customer"`
+	CampaignID      string `json:"campaign_id" jsonschema:"the campaign ID to update"`
+	BiddingStrategy string `json:"bidding_strategy,omitempty" jsonschema:"new standard (campaign-level) bidding strategy, e.g. MAXIMIZE_CONVERSIONS; mutually exclusive with portfolio_strategy_id"`
+	// PortfolioStrategyID attaches the campaign to a shared bidding strategy so
+	// several campaigns pool their conversion volume into one learning set.
+	PortfolioStrategyID string   `json:"portfolio_strategy_id,omitempty" jsonschema:"ID (or resource name) of a portfolio bidding strategy to attach this campaign to; its targets live on the shared strategy, so do not pass target_cpa/target_roas with it"`
+	TargetCPA           float64  `json:"target_cpa,omitempty" jsonschema:"target CPA in currency units"`
+	TargetROAS          float64  `json:"target_roas,omitempty" jsonschema:"target ROAS ratio"`
+	DailyBudget         float64  `json:"daily_budget,omitempty" jsonschema:"new daily budget in currency units (capped by the budget guard)"`
+	GeoTargetIDs        []string `json:"geo_target_ids,omitempty" jsonschema:"geo target constant IDs to add"`
+	LanguageIDs         []string `json:"language_ids,omitempty" jsonschema:"language constant IDs to add"`
 	// Location options — how targeted/excluded locations are matched. Each
 	// side is left untouched when omitted.
 	PositiveGeoTargetType string `json:"positive_geo_target_type,omitempty" jsonschema:"how targeted locations are matched: PRESENCE_OR_INTEREST or PRESENCE for people in the location only"`
@@ -253,6 +342,22 @@ func runUpdateCampaign(ctx context.Context, c *Client, args UpdateCampaignArgs) 
 	}
 	if args.BiddingStrategy != "" {
 		if err := validateBiddingStrategyTargets(args.BiddingStrategy, args.TargetCPA, args.TargetROAS); err != nil {
+			return WriteResult{}, err
+		}
+	}
+	// A portfolio strategy carries its own type and targets on the shared
+	// resource, so it cannot be combined with a campaign-level strategy or a
+	// campaign-level target.
+	portfolioID := ""
+	if args.PortfolioStrategyID != "" {
+		if args.BiddingStrategy != "" {
+			return WriteResult{}, fmt.Errorf("bidding_strategy and portfolio_strategy_id cannot be set together — a portfolio strategy carries its own type; pass portfolio_strategy_id alone to attach, or bidding_strategy alone to move back to a standard strategy")
+		}
+		if args.TargetCPA != 0 || args.TargetROAS != 0 {
+			return WriteResult{}, fmt.Errorf("target_cpa/target_roas cannot be set with portfolio_strategy_id — a portfolio strategy's targets belong to the shared strategy; change them there so every attached campaign moves together")
+		}
+		portfolioID, err = parsePortfolioStrategyID(args.PortfolioStrategyID)
+		if err != nil {
 			return WriteResult{}, err
 		}
 	}
@@ -315,10 +420,26 @@ func runUpdateCampaign(ctx context.Context, c *Client, args UpdateCampaignArgs) 
 	// in a single batch.
 	update := map[string]any{"resourceName": campaignResource}
 	var mask []string
+	var portfolio portfolioStrategyInfo
 	if strategy != "" {
 		if err := applyBiddingStrategyUpdate(update, &mask, strategy, args.TargetCPA, args.TargetROAS); err != nil {
 			return WriteResult{}, err
 		}
+	}
+	if portfolioID != "" {
+		// Resolved rather than assembled from the campaign's customer ID: a
+		// manager-owned strategy's resource name carries the manager's ID, and
+		// an ID that is not attachable here fails at preview instead of on the
+		// confirmed mutate.
+		portfolio, err = fetchPortfolioStrategy(ctx, c, cid, portfolioID)
+		if err != nil {
+			return WriteResult{}, toolError(tool, err)
+		}
+		// biddingStrategy is a member of the campaign_bidding_strategy union, so
+		// setting it clears whatever standard strategy the campaign held (and
+		// setting a standard strategy later detaches the portfolio the same way).
+		update["biddingStrategy"] = portfolio.resourceName()
+		mask = append(mask, "biddingStrategy")
 	}
 	if geoSetting != nil {
 		update["geoTargetTypeSetting"] = geoSetting
@@ -346,6 +467,12 @@ func runUpdateCampaign(ctx context.Context, c *Client, args UpdateCampaignArgs) 
 		return WriteResult{}, fmt.Errorf("no changes specified for campaign update")
 	}
 	summary := fmt.Sprintf("Update campaign %s (%d operation(s))", args.CampaignID, len(ops))
+	if portfolioID != "" {
+		summary = fmt.Sprintf("Attach campaign %s to portfolio bidding strategy %q (%s, ID %s)", args.CampaignID, portfolio.Name, portfolio.Type, portfolio.ID)
+		if len(ops) > 1 {
+			summary += fmt.Sprintf(" and %d other change(s)", len(ops)-1)
+		}
+	}
 	if doubleConfirm {
 		return previewMutateDouble(tool, cid, summary, ops)
 	}
@@ -377,7 +504,8 @@ func init() {
 	f := campaignUpdateCmd.Flags()
 	f.StringVar(&updateCampaignArgs.CustomerID, "customer-id", "", "Google Ads customer ID (falls back to the configured default)")
 	f.StringVar(&updateCampaignArgs.CampaignID, "campaign-id", "", "campaign ID (required)")
-	f.StringVar(&updateCampaignArgs.BiddingStrategy, "bidding-strategy", "", "new bidding strategy")
+	f.StringVar(&updateCampaignArgs.BiddingStrategy, "bidding-strategy", "", "new standard bidding strategy (mutually exclusive with --portfolio-strategy-id)")
+	f.StringVar(&updateCampaignArgs.PortfolioStrategyID, "portfolio-strategy-id", "", "attach the campaign to this portfolio bidding strategy (ID or resource name)")
 	f.Float64Var(&updateCampaignArgs.TargetCPA, "target-cpa", 0, "target CPA in currency units")
 	f.Float64Var(&updateCampaignArgs.TargetROAS, "target-roas", 0, "target ROAS ratio")
 	f.Float64Var(&updateCampaignArgs.DailyBudget, "daily-budget", 0, "new daily budget in currency units")

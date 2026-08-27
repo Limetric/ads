@@ -805,3 +805,183 @@ func TestUpdateCampaign_RejectsInvalidGeoTargetTypeBeforeLookup(t *testing.T) {
 		})
 	}
 }
+
+// portfolioStrategyServer answers the accessible_bidding_strategy lookup with
+// one strategy owned by ownerID and captures the mutate body.
+func portfolioStrategyServer(t *testing.T, ownerID string, mutateBody *map[string]any) *httptest.Server {
+	t.Helper()
+	var searchQueries []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "googleAds:search"):
+			var body struct {
+				Query string `json:"query"`
+			}
+			_ = decodeJSONBody(r, &body)
+			searchQueries = append(searchQueries, body.Query)
+			if !strings.Contains(body.Query, "accessible_bidding_strategy") {
+				t.Errorf("unexpected search query: %s", body.Query)
+			}
+			_, _ = w.Write([]byte(`{"results":[{"accessibleBiddingStrategy":{"id":"9","name":"Pooled tCPA","type":"TARGET_CPA","ownerCustomerId":"` + ownerID + `"}}]}`))
+		case strings.HasSuffix(r.URL.Path, "googleAds:mutate"):
+			_ = decodeJSONBody(r, mutateBody)
+			_, _ = w.Write([]byte(`{"mutateOperationResponses":[{}]}`))
+		}
+	}))
+	return srv
+}
+
+func TestUpdateCampaign_AttachesPortfolioStrategy(t *testing.T) {
+	useTempState(t)
+	var mutateBody map[string]any
+	srv := portfolioStrategyServer(t, "1", &mutateBody)
+	defer srv.Close()
+	c := newTestClient(t, srv)
+
+	args := UpdateCampaignArgs{CustomerID: "1", CampaignID: "5", PortfolioStrategyID: "9"}
+	preview, err := runUpdateCampaign(t.Context(), c, args)
+	if err != nil {
+		t.Fatalf("preview: %v", err)
+	}
+	// The preview names the strategy so the operator confirms against what the
+	// campaign will actually bid with, not a bare ID.
+	if !strings.Contains(preview.Preview, "Pooled tCPA") || !strings.Contains(preview.Preview, "TARGET_CPA") {
+		t.Errorf("preview does not describe the strategy: %s", preview.Preview)
+	}
+	args.Confirm = preview.Token
+	if _, err := runUpdateCampaign(t.Context(), c, args); err != nil {
+		t.Fatalf("confirm: %v", err)
+	}
+	ops, _ := mutateBody["mutateOperations"].([]any)
+	if len(ops) != 1 {
+		t.Fatalf("mutate operations = %v, want one campaign update", mutateBody["mutateOperations"])
+	}
+	outer, _ := ops[0].(map[string]any)
+	op, _ := outer["campaignOperation"].(map[string]any)
+	update, _ := op["update"].(map[string]any)
+	if update["biddingStrategy"] != "customers/1/biddingStrategies/9" {
+		t.Errorf("biddingStrategy = %v", update["biddingStrategy"])
+	}
+	if op["updateMask"] != "biddingStrategy" {
+		t.Errorf("updateMask = %v, want biddingStrategy", op["updateMask"])
+	}
+}
+
+func TestUpdateCampaign_PortfolioStrategyUsesOwnerCustomerID(t *testing.T) {
+	useTempState(t)
+	// A manager-owned strategy is attachable by the child account, but its
+	// resource name carries the manager's customer ID.
+	var mutateBody map[string]any
+	srv := portfolioStrategyServer(t, "99", &mutateBody)
+	defer srv.Close()
+	c := newTestClient(t, srv)
+
+	args := UpdateCampaignArgs{CustomerID: "1", CampaignID: "5", PortfolioStrategyID: "9"}
+	preview, err := runUpdateCampaign(t.Context(), c, args)
+	if err != nil {
+		t.Fatalf("preview: %v", err)
+	}
+	args.Confirm = preview.Token
+	if _, err := runUpdateCampaign(t.Context(), c, args); err != nil {
+		t.Fatalf("confirm: %v", err)
+	}
+	ops, _ := mutateBody["mutateOperations"].([]any)
+	outer, _ := ops[0].(map[string]any)
+	op, _ := outer["campaignOperation"].(map[string]any)
+	update, _ := op["update"].(map[string]any)
+	if update["biddingStrategy"] != "customers/99/biddingStrategies/9" {
+		t.Errorf("biddingStrategy = %v, want the manager-owned resource name", update["biddingStrategy"])
+	}
+}
+
+func TestUpdateCampaign_PortfolioStrategyAcceptsResourceName(t *testing.T) {
+	useTempState(t)
+	var mutateBody map[string]any
+	srv := portfolioStrategyServer(t, "1", &mutateBody)
+	defer srv.Close()
+	c := newTestClient(t, srv)
+
+	// create_portfolio_bidding_strategy returns resource names; passing one
+	// straight back must work.
+	args := UpdateCampaignArgs{CustomerID: "1", CampaignID: "5", PortfolioStrategyID: "customers/1/biddingStrategies/9"}
+	preview, err := runUpdateCampaign(t.Context(), c, args)
+	if err != nil {
+		t.Fatalf("preview: %v", err)
+	}
+	args.Confirm = preview.Token
+	if _, err := runUpdateCampaign(t.Context(), c, args); err != nil {
+		t.Fatalf("confirm: %v", err)
+	}
+	ops, _ := mutateBody["mutateOperations"].([]any)
+	outer, _ := ops[0].(map[string]any)
+	op, _ := outer["campaignOperation"].(map[string]any)
+	update, _ := op["update"].(map[string]any)
+	if update["biddingStrategy"] != "customers/1/biddingStrategies/9" {
+		t.Errorf("biddingStrategy = %v", update["biddingStrategy"])
+	}
+}
+
+func TestUpdateCampaign_PortfolioStrategyUnknownIDFailsAtPreview(t *testing.T) {
+	useTempState(t)
+	var mutateCalls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "googleAds:mutate") {
+			mutateCalls++
+		}
+		_, _ = w.Write([]byte(`{"results":[]}`))
+	}))
+	defer srv.Close()
+	c := newTestClient(t, srv)
+
+	_, err := runUpdateCampaign(t.Context(), c, UpdateCampaignArgs{CustomerID: "1", CampaignID: "5", PortfolioStrategyID: "9"})
+	if err == nil {
+		t.Fatal("expected an error for an inaccessible strategy")
+	}
+	if !strings.Contains(err.Error(), "create_portfolio_bidding_strategy") {
+		t.Errorf("error is not actionable: %v", err)
+	}
+	if mutateCalls != 0 {
+		t.Error("preview must not call mutate")
+	}
+}
+
+func TestUpdateCampaign_PortfolioStrategyRejectsConflicts(t *testing.T) {
+	useTempState(t)
+	tests := []struct {
+		name string
+		args UpdateCampaignArgs
+		want string
+	}{
+		{
+			name: "with a standard strategy",
+			args: UpdateCampaignArgs{CustomerID: "1", CampaignID: "5", PortfolioStrategyID: "9", BiddingStrategy: "TARGET_CPA", TargetCPA: 10},
+			want: "cannot be set together",
+		},
+		{
+			name: "with a campaign-level target",
+			args: UpdateCampaignArgs{CustomerID: "1", CampaignID: "5", PortfolioStrategyID: "9", TargetCPA: 10},
+			want: "belong to the shared strategy",
+		},
+		{
+			name: "non-numeric ID",
+			args: UpdateCampaignArgs{CustomerID: "1", CampaignID: "5", PortfolioStrategyID: "9 OR 1=1"},
+			want: "must be a plain numeric ID",
+		},
+		{
+			name: "resource name of another entity",
+			args: UpdateCampaignArgs{CustomerID: "1", CampaignID: "5", PortfolioStrategyID: "customers/1/campaigns/9"},
+			want: "not a bidding strategy resource name",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// nil client: every one of these must fail before any API call.
+			_, err := runUpdateCampaign(t.Context(), nil, tt.args)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %v, want it to mention %q", err, tt.want)
+			}
+		})
+	}
+}
