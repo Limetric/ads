@@ -1,7 +1,5 @@
 # ads
 
-[![CI](https://github.com/Limetric/ads/actions/workflows/ci.yml/badge.svg)](https://github.com/Limetric/ads/actions/workflows/ci.yml)
-
 **Your ad accounts, minus the dashboard-clicking.** `ads` is the CLI and MCP
 server that lets you (or your favorite AI agent) query campaigns, check spend,
 and ship budget changes without ever opening a browser tab. Google Ads and
