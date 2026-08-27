@@ -211,7 +211,8 @@ var bingLoginCmd = &cobra.Command{
 			return bingTokenPolicy.rotationStoreError(err)
 		}
 
-		fmt.Fprintln(out, "=== Microsoft Advertising sign-in ===")
+		st := newStyles(out)
+		fmt.Fprintln(out, st.header("=== Microsoft Advertising sign-in ==="))
 		conf := bingLoginConfig(cfg, bingLoginPort)
 		addr := fmt.Sprintf("127.0.0.1:%d", bingLoginPort)
 		ln, err := net.Listen("tcp", addr)
@@ -222,19 +223,19 @@ var bingLoginCmd = &cobra.Command{
 			// A missing browser opener (headless Linux without xdg-open) must
 			// not abort the login — fall back to printing the URL.
 			if err := openBrowser(u); err != nil {
-				fmt.Fprintf(out, "Could not open a browser (%v).\nOpen this URL manually:\n  %s\n", err, u)
+				fmt.Fprintf(out, "%s\nOpen this URL manually:\n  %s\n", st.warning(fmt.Sprintf("Could not open a browser (%v).", err)), st.url(u))
 			}
 			return nil
 		}
 		if bingLoginNoBrowser {
 			openFn = func(u string) error {
-				fmt.Fprintf(out, "Open this URL in your browser:\n  %s\n", u)
+				fmt.Fprintf(out, "Open this URL in your browser:\n  %s\n", st.url(u))
 				return nil
 			}
 		} else {
-			fmt.Fprintln(out, "Opening browser for Microsoft sign-in…")
+			fmt.Fprintln(out, st.muted("Opening browser for Microsoft sign-in…"))
 		}
-		fmt.Fprintf(out, "Waiting for callback on %s …\n", bingLoginRedirectURL(bingLoginPort))
+		fmt.Fprintln(out, st.muted("Waiting for callback on "+bingLoginRedirectURL(bingLoginPort)+" …"))
 
 		code, verifier, err := runBingLoopbackOAuth(cmd.Context(), conf, openFn, ln)
 		if err != nil {
@@ -244,7 +245,7 @@ var bingLoginCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		fmt.Fprintln(out, "✓ Authorized. Exchanged code for a refresh token.")
+		fmt.Fprintf(out, "%s Authorized. Exchanged code for a refresh token.\n", st.success("✓"))
 
 		target, err := configWriteTarget(configPath)
 		if err != nil {
@@ -253,9 +254,9 @@ var bingLoginCmd = &cobra.Command{
 		if err := saveBingCredentials(target, cfg, tok.RefreshToken); err != nil {
 			return err
 		}
-		fmt.Fprintf(out, "✓ Wrote credentials to %s\n", target)
-		printBingHandoff(out, cfg)
-		fmt.Fprintf(out, "Run `ads doctor %s` to verify.\n", bingPlatformName)
+		fmt.Fprintf(out, "%s Wrote credentials to %s\n", st.success("✓"), st.muted(target))
+		printBingHandoff(out, st, cfg)
+		fmt.Fprintf(out, "Run %s to verify.\n", st.accent("`ads doctor "+bingPlatformName+"`"))
 		return nil
 	},
 }
@@ -284,18 +285,18 @@ func loadBingLoginConfig(path string) (*BingConfig, error) {
 // not an omission: Microsoft issues a new refresh token on every refresh and
 // invalidates the old one, so a token pasted into a variable stops working
 // after the first run. The store is the only place it can live.
-func printBingHandoff(out io.Writer, cfg *BingConfig) {
-	fmt.Fprintln(out, "\nFor CI / MCP hosts, set:")
+func printBingHandoff(out io.Writer, st styles, cfg *BingConfig) {
+	fmt.Fprintln(out, "\n"+st.accent("For CI / MCP hosts, set:"))
 	fmt.Fprintln(out, "  export BING_ADS_DEVELOPER_TOKEN=\"…\"")
 	fmt.Fprintf(out, "  export BING_ADS_CLIENT_ID=%q\n", cfg.ClientID)
 	if cfg.CustomerID != "" {
 		fmt.Fprintf(out, "  export BING_ADS_CUSTOMER_ID=%q\n", cfg.CustomerID)
 	}
 	if path, err := tokenStorePath(bingTokenPolicy.Platform); err == nil {
-		fmt.Fprintln(out, "\nThe refresh token lives in the token store:")
+		fmt.Fprintln(out, "\n"+st.accent("The refresh token lives in the token store:"))
 		fmt.Fprintf(out, "  %s\n", path)
-		fmt.Fprintln(out, "Microsoft replaces it on every refresh, so it cannot be passed in an")
-		fmt.Fprintln(out, "environment variable — mount the store instead, writable, and point ads at it:")
+		fmt.Fprintln(out, st.muted("Microsoft replaces it on every refresh, so it cannot be passed in an"))
+		fmt.Fprintln(out, st.muted("environment variable — mount the store instead, writable, and point ads at it:"))
 		fmt.Fprintf(out, "  export %s=\"/path/to/tokens\"\n", tokenStoreEnv)
 	}
 	fmt.Fprintln(out)

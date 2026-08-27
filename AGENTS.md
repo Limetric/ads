@@ -80,6 +80,9 @@ Core (platform-neutral):
 - `write_tool.go` — `WriteResult`, and the shared apply path over the
   `mutationApplier` interface each platform's client implements.
 - `guards.go` — spend cap, bid-increase limit, blocked-op list.
+- `color.go` — the terminal palette (`styles`) the human-facing commands render
+  with. Colour applies only to a terminal, and only when the user hasn't opted
+  out; JSON results and MCP output never go through it.
 
 Google provider:
 

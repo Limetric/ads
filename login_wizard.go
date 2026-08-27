@@ -125,6 +125,10 @@ func expandHome(path string) string {
 	return path
 }
 
+// wizardFieldWidth is the column the wizard's "existing setup" summary lines its
+// values up in. It is narrower than doctor's because the block is indented.
+const wizardFieldWidth = 19
+
 // dashCustomerID formats a 10-digit customer ID as 123-456-7890 for display.
 func dashCustomerID(id string) string {
 	if len(id) == 10 {
@@ -143,21 +147,22 @@ const (
 // offerToOpen prints an instruction + URL and (unless --no-browser) offers to
 // open it, then waits for the user to press Enter.
 func offerToOpen(p prompter, out io.Writer, instruction, url string, openFn func(string) error) error {
-	fmt.Fprintf(out, "   %s\n   → %s\n", instruction, url)
+	st := newStyles(out)
+	fmt.Fprintf(out, "   %s\n   %s %s\n", instruction, st.muted("→"), st.url(url))
 	if loginNoBrowser {
-		_, err := p.line("   Press Enter when done.")
+		_, err := p.line(st.muted("   Press Enter when done."))
 		return err
 	}
-	open, err := p.confirm("   Open this now?", true)
+	open, err := p.confirm(st.prompt("   Open this now?"), true)
 	if err != nil {
 		return err
 	}
 	if open {
 		if e := openFn(url); e != nil {
-			fmt.Fprintf(out, "   (couldn't open a browser: %v — open the URL above manually)\n", e)
+			fmt.Fprintf(out, "   %s\n", st.warning(fmt.Sprintf("(couldn't open a browser: %v — open the URL above manually)", e)))
 		}
 	}
-	_, err = p.line("   Press Enter when done.")
+	_, err = p.line(st.muted("   Press Enter when done."))
 	return err
 }
 
@@ -167,20 +172,21 @@ func offerToOpen(p prompter, out io.Writer, instruction, url string, openFn func
 // (or --no-browser) leaves the URL on screen for the user to open manually; the
 // loopback server waits for the callback either way.
 func confirmBrowserOpen(p prompter, out io.Writer, port int, openFn func(string) error) func(string) error {
+	st := newStyles(out)
 	return func(u string) error {
-		fmt.Fprintf(out, "   Sign in to Google to authorize ads.\n   → %s\n", u)
+		fmt.Fprintf(out, "   Sign in to Google to authorize ads.\n   %s %s\n", st.muted("→"), st.url(u))
 		if !loginNoBrowser {
-			open, err := p.confirm("   Open this now?", true)
+			open, err := p.confirm(st.prompt("   Open this now?"), true)
 			if err != nil {
 				return err
 			}
 			if open {
 				if e := openFn(u); e != nil {
-					fmt.Fprintf(out, "   (couldn't open a browser: %v — open the URL above manually)\n", e)
+					fmt.Fprintf(out, "   %s\n", st.warning(fmt.Sprintf("(couldn't open a browser: %v — open the URL above manually)", e)))
 				}
 			}
 		}
-		fmt.Fprintf(out, "   Waiting for callback on %s …\n", loopbackRedirectURL(port))
+		fmt.Fprintf(out, "   %s\n", st.muted("Waiting for callback on "+loopbackRedirectURL(port)+" …"))
 		return nil
 	}
 }
@@ -189,8 +195,9 @@ func confirmBrowserOpen(p prompter, out io.Writer, port int, openFn func(string)
 // or guide the user to download a Desktop-app JSON and read it (re-prompting on
 // a bad path).
 func wizardGatherClient(p prompter, out io.Writer, cfg *GoogleConfig, openFn func(string) error) (clientCreds, error) {
+	st := newStyles(out)
 	if cfg.ClientID != "" && cfg.ClientSecret != "" {
-		keep, err := p.confirm(fmt.Sprintf("   Found an OAuth client (%s). Keep it?", secretHint(cfg.ClientID)), true)
+		keep, err := p.confirm(st.prompt(fmt.Sprintf("   Found an OAuth client (%s). Keep it?", secretHint(cfg.ClientID))), true)
 		if err != nil {
 			return clientCreds{}, err
 		}
@@ -202,29 +209,29 @@ func wizardGatherClient(p prompter, out io.Writer, cfg *GoogleConfig, openFn fun
 		return clientCreds{}, err
 	}
 	for {
-		raw, err := p.line("   Path to the downloaded JSON: ")
+		raw, err := p.line(st.prompt("   Path to the downloaded JSON") + ": ")
 		if err != nil {
 			return clientCreds{}, err
 		}
 		path := expandHome(raw)
 		data, err := os.ReadFile(path)
 		if err != nil {
-			fmt.Fprintf(out, "   couldn't read %q: %v — try again.\n", path, err)
+			fmt.Fprintf(out, "   %s\n", st.failure(fmt.Sprintf("couldn't read %q: %v — try again.", path, err)))
 			continue
 		}
 		creds, err := parseCredentialsJSON(data)
 		if err != nil {
-			fmt.Fprintf(out, "   %v — try again.\n", err)
+			fmt.Fprintf(out, "   %s\n", st.failure(fmt.Sprintf("%v — try again.", err)))
 			continue
 		}
 		if creds.clientID == "" || creds.clientSecret == "" {
-			fmt.Fprintln(out, "   that file has no client_id/client_secret — try again.")
+			fmt.Fprintf(out, "   %s\n", st.failure("that file has no client_id/client_secret — try again."))
 			continue
 		}
 		if creds.kind == "web" {
-			fmt.Fprintln(out, "   note: this is a Web-application client; a Desktop-app client is recommended. Continuing.")
+			fmt.Fprintf(out, "   %s\n", st.warning("note: this is a Web-application client; a Desktop-app client is recommended. Continuing."))
 		}
-		fmt.Fprintf(out, "   ✓ Read client %q\n", secretHint(creds.clientID))
+		fmt.Fprintf(out, "   %s Read client %q\n", st.success("✓"), secretHint(creds.clientID))
 		return creds, nil
 	}
 }
@@ -232,8 +239,9 @@ func wizardGatherClient(p prompter, out io.Writer, cfg *GoogleConfig, openFn fun
 // wizardGatherDeveloperToken reuses an existing developer token or prompts for a
 // new one (masked), re-prompting until non-empty.
 func wizardGatherDeveloperToken(p prompter, out io.Writer, cfg *GoogleConfig, openFn func(string) error) (string, error) {
+	st := newStyles(out)
 	if cfg.DeveloperToken != "" {
-		keep, err := p.confirm(fmt.Sprintf("   Found a developer token (%s). Keep it?", secretHint(cfg.DeveloperToken)), true)
+		keep, err := p.confirm(st.prompt(fmt.Sprintf("   Found a developer token (%s). Keep it?", secretHint(cfg.DeveloperToken))), true)
 		if err != nil {
 			return "", err
 		}
@@ -245,23 +253,24 @@ func wizardGatherDeveloperToken(p prompter, out io.Writer, cfg *GoogleConfig, op
 		return "", err
 	}
 	for {
-		tok, err := p.secret("   Paste your developer token: ")
+		tok, err := p.secret(st.prompt("   Paste your developer token") + ": ")
 		if err != nil {
 			return "", err
 		}
 		if tok != "" {
 			return tok, nil
 		}
-		fmt.Fprintln(out, "   developer token can't be empty — try again.")
+		fmt.Fprintf(out, "   %s\n", st.failure("developer token can't be empty — try again."))
 	}
 }
 
 // wizardGatherLoginCustomerID prompts for an optional manager (MCC) account ID,
 // defaulting to the existing value and stripping dashes.
 func wizardGatherLoginCustomerID(p prompter, out io.Writer, cfg *GoogleConfig) (string, error) {
-	prompt := "   Login customer ID [skip]: "
+	st := newStyles(out)
+	prompt := st.prompt("   Login customer ID") + " " + st.muted("[skip]") + ": "
 	if cfg.LoginCustomerID != "" {
-		prompt = fmt.Sprintf("   Login customer ID [%s]: ", cfg.LoginCustomerID)
+		prompt = st.prompt("   Login customer ID") + " " + st.muted("["+cfg.LoginCustomerID+"]") + ": "
 	}
 	v, err := p.line(prompt)
 	if err != nil {
@@ -276,6 +285,7 @@ func wizardGatherLoginCustomerID(p prompter, out io.Writer, cfg *GoogleConfig) (
 // wizardGatherRefreshToken reuses an existing sign-in or runs the loopback OAuth
 // flow to mint a new refresh token.
 func wizardGatherRefreshToken(ctx context.Context, p prompter, out io.Writer, creds clientCreds, cfg *GoogleConfig, openFn func(string) error, port int) (string, error) {
+	st := newStyles(out)
 	if creds.kind == "authorized_user" && creds.refreshToken != "" {
 		return creds.refreshToken, nil
 	}
@@ -284,12 +294,12 @@ func wizardGatherRefreshToken(ctx context.Context, p prompter, out io.Writer, cr
 	// `ads login google` is what the mismatch warning tells the user to run, so
 	// it has to be the thing that fixes it.
 	if cfg.RefreshToken != "" && creds.kind == "config" && googleSavedSignInUsableWith(creds.clientID) {
-		choice, err := p.line("   Reuse your existing sign-in, or sign in again? [reuse/new]: ")
+		choice, err := p.line(st.prompt("   Reuse your existing sign-in, or sign in again?") + " " + st.muted("[reuse/new]") + ": ")
 		if err != nil {
 			return "", err
 		}
 		if choice == "" || strings.HasPrefix(strings.ToLower(choice), "r") {
-			fmt.Fprintln(out, "   reusing existing sign-in.")
+			fmt.Fprintf(out, "   %s\n", st.muted("reusing existing sign-in."))
 			return cfg.RefreshToken, nil
 		}
 	}
@@ -313,7 +323,7 @@ func wizardGatherRefreshToken(ctx context.Context, p prompter, out io.Writer, cr
 	if err != nil {
 		return "", err
 	}
-	fmt.Fprintln(out, "   ✓ Signed in. Got your refresh token.")
+	fmt.Fprintf(out, "   %s Signed in. Got your refresh token.\n", st.success("✓"))
 	return rt, nil
 }
 
@@ -334,41 +344,42 @@ func wizardSetupComplete(cfg *GoogleConfig) bool {
 // went missing, or a revoked grant — instead of replaying the five-step
 // first-time script.
 func runLoginWizard(ctx context.Context, out io.Writer, p prompter, cfg *GoogleConfig, openFn func(string) error, port int) error {
+	st := newStyles(out)
 	if wizardSetupComplete(cfg) {
-		fmt.Fprintln(out, "Found an existing Google Ads setup:")
-		fmt.Fprintf(out, "   OAuth client:      %s\n", secretHint(cfg.ClientID))
-		fmt.Fprintf(out, "   developer token:   %s\n", secretHint(cfg.DeveloperToken))
+		fmt.Fprintln(out, st.prompt("Found an existing Google Ads setup:"))
+		fmt.Fprintf(out, "   %s%s\n", st.field("OAuth client", wizardFieldWidth), secretHint(cfg.ClientID))
+		fmt.Fprintf(out, "   %s%s\n", st.field("developer token", wizardFieldWidth), secretHint(cfg.DeveloperToken))
 		if cfg.LoginCustomerID != "" {
-			fmt.Fprintf(out, "   login customer ID: %s\n", dashCustomerID(cfg.LoginCustomerID))
+			fmt.Fprintf(out, "   %s%s\n", st.field("login customer ID", wizardFieldWidth), dashCustomerID(cfg.LoginCustomerID))
 		}
-		keep, err := p.confirm("Keep these and just sign in?", true)
+		keep, err := p.confirm(st.prompt("Keep these and just sign in?"), true)
 		if err != nil {
 			return err
 		}
 		if keep {
 			return runSignInOnly(ctx, out, p, cfg, openFn, port)
 		}
-		fmt.Fprintln(out, "OK — walking through the full setup. Press Enter to keep an existing value.")
+		fmt.Fprintln(out, st.muted("OK — walking through the full setup. Press Enter to keep an existing value."))
 		fmt.Fprintln(out)
 	}
 
-	fmt.Fprintln(out, "Welcome to ads. Let's get you connected to Google Ads.")
-	fmt.Fprintln(out, "You'll need: a Google Cloud project, a Desktop-app OAuth client, and a")
-	fmt.Fprintln(out, "Google Ads developer token. I'll walk you through each — about 5 minutes.")
+	fmt.Fprintln(out, st.prompt("Welcome to ads. Let's get you connected to Google Ads."))
+	fmt.Fprintln(out, st.muted("You'll need: a Google Cloud project, a Desktop-app OAuth client, and a"))
+	fmt.Fprintln(out, st.muted("Google Ads developer token. I'll walk you through each — about 5 minutes."))
 	fmt.Fprintln(out)
 
-	fmt.Fprintln(out, "Step 1/5 · Google Cloud project + Google Ads API")
+	fmt.Fprintln(out, st.header("Step 1/5 · Google Cloud project + Google Ads API"))
 	if err := offerToOpen(p, out, "Sign in, pick or create a project, and click Enable.", urlEnableAPI, openFn); err != nil {
 		return err
 	}
 
-	fmt.Fprintln(out, "\nStep 2/5 · Desktop-app OAuth client")
+	fmt.Fprintln(out, "\n"+st.header("Step 2/5 · Desktop-app OAuth client"))
 	creds, err := wizardGatherClient(p, out, cfg, openFn)
 	if err != nil {
 		return err
 	}
 
-	fmt.Fprintln(out, "\nStep 3/5 · Sign in (browser)")
+	fmt.Fprintln(out, "\n"+st.header("Step 3/5 · Sign in (browser)"))
 	// Any existing sign-in lives in the token store, so consult it before
 	// offering to reuse one. This is also where a user upgrading from a
 	// config.toml refresh_token gets migrated.
@@ -380,13 +391,13 @@ func runLoginWizard(ctx context.Context, out io.Writer, p prompter, cfg *GoogleC
 		return err
 	}
 
-	fmt.Fprintln(out, "\nStep 4/5 · Developer token")
+	fmt.Fprintln(out, "\n"+st.header("Step 4/5 · Developer token"))
 	devToken, err := wizardGatherDeveloperToken(p, out, cfg, openFn)
 	if err != nil {
 		return err
 	}
 
-	fmt.Fprintln(out, "\nStep 5/5 · Manager (MCC) account ID — optional")
+	fmt.Fprintln(out, "\n"+st.header("Step 5/5 · Manager (MCC) account ID — optional"))
 	loginCID, err := wizardGatherLoginCustomerID(p, out, cfg)
 	if err != nil {
 		return err
@@ -401,7 +412,7 @@ func runLoginWizard(ctx context.Context, out io.Writer, p prompter, cfg *GoogleC
 // working setup is harmless.
 func runSignInOnly(ctx context.Context, out io.Writer, p prompter, cfg *GoogleConfig, openFn func(string) error, port int) error {
 	creds := clientCreds{clientID: cfg.ClientID, clientSecret: cfg.ClientSecret, kind: "config"}
-	fmt.Fprintln(out, "\nSign in (browser)")
+	fmt.Fprintln(out, "\n"+newStyles(out).header("Sign in (browser)"))
 	if err := cfg.resolveRefreshToken(); err != nil {
 		return err
 	}
@@ -416,11 +427,12 @@ func runSignInOnly(ctx context.Context, out io.Writer, p prompter, cfg *GoogleCo
 // their homes, developer token and MCC id into config — and then proves the
 // setup works with a live API call.
 func wizardSaveAndVerify(ctx context.Context, out io.Writer, cfg *GoogleConfig, creds clientCreds, refreshToken, devToken, loginCID string) error {
+	st := newStyles(out)
 	target, err := configWriteTarget(configPath)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "\nSaving to %s …\n", target)
+	fmt.Fprintf(out, "\n%s\n", st.muted("Saving to "+target+" …"))
 	if err := saveGoogleCredentials(target, creds, refreshToken); err != nil {
 		return err
 	}
@@ -445,7 +457,7 @@ func wizardSaveAndVerify(ctx context.Context, out io.Writer, cfg *GoogleConfig, 
 	final.refreshTokenResolved = true
 	final.DeveloperToken = devToken
 	final.LoginCustomerID = loginCID
-	fmt.Fprint(out, "Verifying… ")
+	fmt.Fprint(out, st.muted("Verifying… "))
 	client, err := NewClient(ctx, &final)
 	if err == nil {
 		var ids []string
@@ -455,14 +467,14 @@ func wizardSaveAndVerify(ctx context.Context, out io.Writer, cfg *GoogleConfig, 
 			for i, id := range ids {
 				dashed[i] = dashCustomerID(id)
 			}
-			fmt.Fprintf(out, "✓ Connected — %d accessible account(s): %s\n", len(ids), strings.Join(dashed, ", "))
-			fmt.Fprintln(out, "\nYou're ready. Try:  ads google accounts")
+			fmt.Fprintf(out, "%s Connected — %d accessible account(s): %s\n", st.success("✓"), len(ids), strings.Join(dashed, ", "))
+			fmt.Fprintf(out, "\n%s Try:  %s\n", st.prompt("You're ready."), st.accent("ads google accounts"))
 			return nil
 		}
 	}
-	fmt.Fprintln(out, "✗")
-	fmt.Fprintf(out, "Saved your config, but verification failed: %v\n", err)
-	fmt.Fprintln(out, "Likely: the developer token isn't approved yet or was mistyped, or an OAuth problem.")
-	fmt.Fprintln(out, "Fix it and re-run `ads login google`, or run `ads doctor google`.")
+	fmt.Fprintln(out, st.failure("✗"))
+	fmt.Fprintf(out, "%s\n", st.failure(fmt.Sprintf("Saved your config, but verification failed: %v", err)))
+	fmt.Fprintln(out, st.muted("Likely: the developer token isn't approved yet or was mistyped, or an OAuth problem."))
+	fmt.Fprintf(out, "%s\n", st.muted("Fix it and re-run `ads login google`, or run `ads doctor google`."))
 	return fmt.Errorf("verification failed: %w", err)
 }

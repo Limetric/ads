@@ -20,15 +20,17 @@ func bingDoctor(ctx context.Context, out io.Writer, offline bool) (liveResult, e
 		return liveUnconfigured, err
 	}
 	store := describeTokenStore(bingTokenPolicy.Platform)
-	fmt.Fprintf(out, "environment:        %s\n", cfg.Environment)
-	fmt.Fprintf(out, "api host:           %s\n", bingCampaignService.url(cfg, ""))
-	fmt.Fprintf(out, "developer token:    %s\n", bingDeveloperTokenReport(cfg))
-	fmt.Fprintf(out, "client id:          %s\n", present(cfg.ClientID))
-	fmt.Fprintf(out, "client secret:      %s\n", bingClientSecretReport(cfg))
-	fmt.Fprintf(out, "token store:        %s\n", store.location())
-	fmt.Fprintf(out, "saved sign-in:      %s\n", store.describe(bingTokenPolicy))
-	fmt.Fprintf(out, "manager (customer): %s\n", bingManagerReport(cfg))
-	fmt.Fprintf(out, "default account:    %s\n", orNone(cfg.DefaultAccountID))
+	st := newStyles(out)
+	field := func(label, value string) { fmt.Fprintf(out, "%s%s\n", st.field(label, doctorFieldWidth), value) }
+	field("environment", cfg.Environment)
+	field("api host", bingCampaignService.url(cfg, ""))
+	field("developer token", bingDeveloperTokenReport(st, cfg))
+	field("client id", st.presence(cfg.ClientID))
+	field("client secret", bingClientSecretReport(st, cfg))
+	field("token store", store.location())
+	field("saved sign-in", store.describe(bingTokenPolicy))
+	field("manager (customer)", bingManagerReport(st, cfg))
+	field("default account", st.optional(cfg.DefaultAccountID))
 	if err := cfg.validate(refreshToken); err != nil {
 		return liveUnconfigured, err
 	}
@@ -36,42 +38,42 @@ func bingDoctor(ctx context.Context, out io.Writer, offline bool) (liveResult, e
 		return liveOffline, nil
 	}
 	fmt.Fprintln(out)
-	return runBingDoctorLive(ctx, out, cfg)
+	return runBingDoctorLive(ctx, out, st, cfg)
 }
 
 // bingDeveloperTokenReport says where the developer token came from. Reporting
 // the sandbox token as merely "set" would hide the most common sandbox mistake
 // — running against production with it, which fails as error 105.
-func bingDeveloperTokenReport(cfg *BingConfig) string {
+func bingDeveloperTokenReport(st styles, cfg *BingConfig) string {
 	switch {
 	case cfg.DeveloperToken == "":
-		return present("")
+		return st.presence("")
 	case cfg.DeveloperToken == bingSandboxDeveloperToken && cfg.Environment == bingEnvSandbox:
-		return "set (the universal sandbox token)"
+		return st.success("set") + " " + st.muted("(the universal sandbox token)")
 	case cfg.DeveloperToken == bingSandboxDeveloperToken:
-		return "set to the SANDBOX token, but the environment is " + cfg.Environment + " — production needs its own developer token"
+		return st.warning("set to the SANDBOX token, but the environment is " + cfg.Environment + " — production needs its own developer token")
 	default:
-		return "set"
+		return st.success("set")
 	}
 }
 
 // bingManagerReport describes the manager account. Unset is not "missing":
 // the client reads it from the ad account on first use, so saying "(none)"
 // would report a working setup as an incomplete one.
-func bingManagerReport(cfg *BingConfig) string {
+func bingManagerReport(st styles, cfg *BingConfig) string {
 	if cfg.CustomerID == "" {
-		return "(not set — discovered from the account on first use; set BING_ADS_CUSTOMER_ID to pin it)"
+		return st.muted("(not set — discovered from the account on first use; set BING_ADS_CUSTOMER_ID to pin it)")
 	}
 	return cfg.CustomerID
 }
 
 // bingClientSecretReport describes the client secret, which is optional and
 // usually absent: `ads login bing` registers a public client and uses PKCE.
-func bingClientSecretReport(cfg *BingConfig) string {
+func bingClientSecretReport(st styles, cfg *BingConfig) string {
 	if cfg.ClientSecret == "" {
-		return "(none — public client, PKCE)"
+		return st.muted("(none — public client, PKCE)")
 	}
-	return "set (web application client)"
+	return st.success("set") + " " + st.muted("(web application client)")
 }
 
 // runBingDoctorLive makes real API calls to prove the setup works, printing a
@@ -82,27 +84,27 @@ func bingClientSecretReport(cfg *BingConfig) string {
 //  2. a campaign read on the default account — what every read command does. It
 //     is the one that catches a default account the sign-in cannot actually
 //     access, which probe 1 has no opinion about.
-func runBingDoctorLive(ctx context.Context, out io.Writer, cfg *BingConfig) (liveResult, error) {
+func runBingDoctorLive(ctx context.Context, out io.Writer, st styles, cfg *BingConfig) (liveResult, error) {
 	client, err := NewBingClient(ctx, cfg)
 	if err != nil {
-		return reportProbe(out, "client:              ", err), err
+		return reportProbe(out, st, "client", err), err
 	}
 
 	accounts, err := client.ListAccounts(ctx, false)
 	if err != nil {
-		return reportProbe(out, "accessible accounts: ", err), err
+		return reportProbe(out, st, "accessible accounts", err), err
 	}
-	fmt.Fprintf(out, "accessible accounts:  ✓ %d (%s)\n", len(accounts), bingAccountSummary(accounts))
+	probeOK(out, st, "accessible accounts", "%d (%s)", len(accounts), bingAccountSummary(accounts))
 
 	if cfg.DefaultAccountID == "" {
-		fmt.Fprintf(out, "live query:           skipped (no default account set — `ads config %s set-account <id>`)\n", bingPlatformName)
+		probeSkipped(out, st, "live query", fmt.Sprintf("no default account set — `ads config %s set-account <id>`", bingPlatformName))
 		return liveOK, nil
 	}
 	campaigns, err := client.ListCampaigns(ctx, cfg.DefaultAccountID)
 	if err != nil {
-		return reportProbe(out, "live query:          ", err), err
+		return reportProbe(out, st, "live query", err), err
 	}
-	fmt.Fprintf(out, "live query:           ✓ %d campaign(s) in account %s\n", len(campaigns), cfg.DefaultAccountID)
+	probeOK(out, st, "live query", "%d campaign(s) in account %s", len(campaigns), cfg.DefaultAccountID)
 	return liveOK, nil
 }
 

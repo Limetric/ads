@@ -18,20 +18,22 @@ func googleShowConfig(out io.Writer) error {
 	// store directly instead of calling resolveRefreshToken, which would
 	// migrate a deprecated seed and rewrite the very file it is describing.
 	store := describeTokenStore(googleTokenPolicy.Platform)
-	fmt.Fprintf(out, "base url:             %s\n", cfg.BaseURL)
-	fmt.Fprintf(out, "developer token:      %s\n", redactSecret(cfg.DeveloperToken))
-	fmt.Fprintf(out, "client id:            %s\n", orNone(cfg.ClientID))
-	fmt.Fprintf(out, "client secret:        %s\n", redactSecret(cfg.ClientSecret))
-	fmt.Fprintf(out, "refresh token:        %s\n", googleRefreshTokenSummary(cfg, store))
-	fmt.Fprintf(out, "token store:          %s\n", store.location())
-	fmt.Fprintf(out, "login customer id:    %s\n", orNone(cfg.LoginCustomerID))
-	fmt.Fprintf(out, "default customer id:  %s\n", orNone(cfg.DefaultCustomerID))
+	st := newStyles(out)
+	field := func(label, value string) { fmt.Fprintf(out, "%s%s\n", st.field(label, configFieldWidth), value) }
+	field("base url", cfg.BaseURL)
+	field("developer token", st.secret(cfg.DeveloperToken))
+	field("client id", st.optional(cfg.ClientID))
+	field("client secret", st.secret(cfg.ClientSecret))
+	field("refresh token", googleRefreshTokenSummary(st, cfg, store))
+	field("token store", store.location())
+	field("login customer id", st.optional(cfg.LoginCustomerID))
+	field("default customer id", st.optional(cfg.DefaultCustomerID))
 	return nil
 }
 
 // googleRefreshTokenSummary renders which sign-in is actually in effect, and
 // where it comes from, without revealing it.
-func googleRefreshTokenSummary(cfg *GoogleConfig, store tokenStoreStatus) string {
+func googleRefreshTokenSummary(st styles, cfg *GoogleConfig, store tokenStoreStatus) string {
 	switch {
 	case store.ReadErr != nil:
 		// A store that cannot be read makes every real command fail on it.
@@ -39,14 +41,14 @@ func googleRefreshTokenSummary(cfg *GoogleConfig, store tokenStoreStatus) string
 		// does not exist, in the one command run to find out what is wrong.
 		return store.describe(googleTokenPolicy)
 	case store.Token != nil:
-		return withOrigin(redactSecret(store.Token.RefreshToken), store.describe(googleTokenPolicy))
+		return withOrigin(st.secret(store.Token.RefreshToken), store.describe(googleTokenPolicy))
 	}
 	seeds := presentSeeds(cfg.refreshTokenSeeds())
 	if len(seeds) == 0 {
-		return redactSecret("")
+		return st.secret("")
 	}
-	return withOrigin(redactSecret(seeds[0].Value),
-		"from "+seeds[0].Origin+" (deprecated — it will be saved to the token store on first use)")
+	return withOrigin(st.secret(seeds[0].Value),
+		st.warning("from "+seeds[0].Origin+" (deprecated — it will be saved to the token store on first use)"))
 }
 
 // withOrigin appends where a credential came from, when that is known.
@@ -76,7 +78,9 @@ var googleSetCustomerCmd = &cobra.Command{
 		if err := upsertConfigKey(path, "default_customer_id", id); err != nil {
 			return err
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "default customer ID set to %s in %s\n", id, path)
+		out := cmd.OutOrStdout()
+		st := newStyles(out)
+		fmt.Fprintf(out, "%s default customer ID set to %s %s\n", st.success("✓"), id, st.muted("in "+path))
 		return nil
 	},
 }

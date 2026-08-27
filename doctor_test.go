@@ -42,7 +42,7 @@ func TestRunGoogleDoctorLive_Healthy(t *testing.T) {
 
 	var out bytes.Buffer
 	cfg := &GoogleConfig{BaseURL: srv.URL, LoginCustomerID: "5987166041"}
-	res, err := runGoogleDoctorLive(context.Background(), &out, cfg)
+	res, err := runGoogleDoctorLive(context.Background(), &out, styles{}, cfg)
 	if err != nil || res != liveOK {
 		t.Fatalf("healthy setup: got (%v, %v), want (liveOK, nil)", res, err)
 	}
@@ -63,7 +63,7 @@ func TestRunGoogleDoctorLive_TestTokenIsDefinitiveFailure(t *testing.T) {
 
 	var out bytes.Buffer
 	cfg := &GoogleConfig{BaseURL: srv.URL, LoginCustomerID: "5987166041"}
-	res, err := runGoogleDoctorLive(context.Background(), &out, cfg)
+	res, err := runGoogleDoctorLive(context.Background(), &out, styles{}, cfg)
 	if err == nil || res != liveFailed {
 		t.Fatalf("test-only token: got (%v, %v), want (liveFailed, err)", res, err)
 	}
@@ -83,7 +83,7 @@ func TestRunGoogleDoctorLive_ServerErrorIsInconclusive(t *testing.T) {
 
 	var out bytes.Buffer
 	cfg := &GoogleConfig{BaseURL: srv.URL, LoginCustomerID: "5987166041"}
-	res, err := runGoogleDoctorLive(context.Background(), &out, cfg)
+	res, err := runGoogleDoctorLive(context.Background(), &out, styles{}, cfg)
 	if err == nil || res != liveInconclusive {
 		t.Fatalf("5xx: got (%v, %v), want (liveInconclusive, err)", res, err)
 	}
@@ -101,7 +101,7 @@ func TestRunGoogleDoctorLive_UnreachableIsInconclusive(t *testing.T) {
 
 	var out bytes.Buffer
 	cfg := &GoogleConfig{BaseURL: url, LoginCustomerID: "5987166041"}
-	res, err := runGoogleDoctorLive(context.Background(), &out, cfg)
+	res, err := runGoogleDoctorLive(context.Background(), &out, styles{}, cfg)
 	if err == nil || res != liveInconclusive {
 		t.Fatalf("unreachable API: got (%v, %v), want (liveInconclusive, err)", res, err)
 	}
@@ -116,7 +116,7 @@ func TestRunGoogleDoctorLive_SkipsQueryWithoutLoginCustomerID(t *testing.T) {
 
 	var out bytes.Buffer
 	cfg := &GoogleConfig{BaseURL: srv.URL} // no login_customer_id
-	res, err := runGoogleDoctorLive(context.Background(), &out, cfg)
+	res, err := runGoogleDoctorLive(context.Background(), &out, styles{}, cfg)
 	if err != nil || res != liveOK {
 		t.Fatalf("no login_customer_id: got (%v, %v), want (liveOK, nil)", res, err)
 	}

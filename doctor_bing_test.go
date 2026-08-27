@@ -36,7 +36,7 @@ func TestRunBingDoctorLive_Healthy(t *testing.T) {
 
 	var out bytes.Buffer
 	cfg := &BingConfig{BaseURL: srv.URL, DefaultAccountID: "123456"}
-	res, err := runBingDoctorLive(context.Background(), &out, cfg)
+	res, err := runBingDoctorLive(context.Background(), &out, styles{}, cfg)
 	if err != nil || res != liveOK {
 		t.Fatalf("healthy setup: got (%v, %v), want (liveOK, nil)", res, err)
 	}
@@ -61,7 +61,7 @@ func TestRunBingDoctorLive_DefinitiveRejection(t *testing.T) {
 
 	var out bytes.Buffer
 	cfg := &BingConfig{BaseURL: srv.URL, DefaultAccountID: "123456"}
-	res, err := runBingDoctorLive(context.Background(), &out, cfg)
+	res, err := runBingDoctorLive(context.Background(), &out, styles{}, cfg)
 	if err == nil {
 		t.Fatal("expected the rejection to surface")
 	}
@@ -83,7 +83,7 @@ func TestRunBingDoctorLive_ThrottleIsInconclusive(t *testing.T) {
 
 	var out bytes.Buffer
 	cfg := &BingConfig{BaseURL: srv.URL, DefaultAccountID: "123456"}
-	res, _ := runBingDoctorLive(context.Background(), &out, cfg)
+	res, _ := runBingDoctorLive(context.Background(), &out, styles{}, cfg)
 	// Being rate limited says nothing about whether the setup works, so it must
 	// not be reported as a broken configuration.
 	if res != liveInconclusive {
@@ -96,7 +96,7 @@ func TestRunBingDoctorLive_SkipsQueryWithoutDefaultAccount(t *testing.T) {
 	defer srv.Close()
 
 	var out bytes.Buffer
-	res, err := runBingDoctorLive(context.Background(), &out, &BingConfig{BaseURL: srv.URL})
+	res, err := runBingDoctorLive(context.Background(), &out, styles{}, &BingConfig{BaseURL: srv.URL})
 	if err != nil || res != liveOK {
 		t.Fatalf("got (%v, %v)", res, err)
 	}
@@ -122,11 +122,11 @@ func TestBingDoctor_ReportsUnconfigured(t *testing.T) {
 func TestBingDeveloperTokenReport_WarnsAboutTheSandboxTokenInProduction(t *testing.T) {
 	// The single most common sandbox mistake: the public sandbox token against
 	// production, which fails as an opaque error 105.
-	got := bingDeveloperTokenReport(&BingConfig{DeveloperToken: bingSandboxDeveloperToken, Environment: bingEnvProduction})
+	got := bingDeveloperTokenReport(styles{}, &BingConfig{DeveloperToken: bingSandboxDeveloperToken, Environment: bingEnvProduction})
 	if !strings.Contains(got, "SANDBOX") {
 		t.Errorf("report = %q, want it to flag the mismatch", got)
 	}
-	ok := bingDeveloperTokenReport(&BingConfig{DeveloperToken: bingSandboxDeveloperToken, Environment: bingEnvSandbox})
+	ok := bingDeveloperTokenReport(styles{}, &BingConfig{DeveloperToken: bingSandboxDeveloperToken, Environment: bingEnvSandbox})
 	if strings.Contains(ok, "SANDBOX token, but") {
 		t.Errorf("report = %q, the sandbox token in the sandbox is correct", ok)
 	}

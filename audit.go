@@ -35,6 +35,27 @@ func readAuditLog() ([]string, error) {
 	return lines, nil
 }
 
+// colorizeAuditEntry highlights the one field a reader scans an audit line for:
+// whether the write landed. The timestamp is dimmed to keep it out of the way,
+// and a line that doesn't have the expected shape is printed untouched — the
+// log is append-only history, and an old or hand-edited line must still read.
+func colorizeAuditEntry(st styles, entry string) string {
+	fields := strings.Fields(entry)
+	if len(fields) < 2 || !strings.Contains(entry, "applied=") {
+		return entry
+	}
+	fields[0] = st.muted(fields[0])
+	for i, f := range fields {
+		switch f {
+		case "applied=true":
+			fields[i] = st.success(f)
+		case "applied=false":
+			fields[i] = st.failure(f)
+		}
+	}
+	return strings.Join(fields, " ")
+}
+
 // --- CLI front-end ---
 
 var auditLimit int
@@ -49,15 +70,16 @@ var auditCmd = &cobra.Command{
 			return err
 		}
 		out := cmd.OutOrStdout()
+		st := newStyles(out)
 		if len(entries) == 0 {
-			fmt.Fprintln(out, "no audited writes yet (the audit log records every confirmed mutation)")
+			fmt.Fprintln(out, st.muted("no audited writes yet (the audit log records every confirmed mutation)"))
 			return nil
 		}
 		if auditLimit > 0 && len(entries) > auditLimit {
 			entries = entries[len(entries)-auditLimit:]
 		}
 		for _, e := range entries {
-			fmt.Fprintln(out, e)
+			fmt.Fprintln(out, colorizeAuditEntry(st, e))
 		}
 		return nil
 	},
