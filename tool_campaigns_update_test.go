@@ -1188,3 +1188,70 @@ func TestUpdateCampaign_RejectsInvalidClearCombinationsBeforeLookup(t *testing.T
 		})
 	}
 }
+
+func TestUpdateCampaign_AddsExcludedLocations(t *testing.T) {
+	useTempState(t)
+	srv, cap := mutateServer(t)
+	defer srv.Close()
+	c := newTestClient(t, srv)
+
+	// --negative-geo-target-type was fully plumbed while nothing could create
+	// an exclusion for it to govern (issue #53); the two now travel together.
+	args := UpdateCampaignArgs{
+		CustomerID: "1", CampaignID: "5",
+		GeoTargetIDs:          []string{"2840"},
+		ExcludeGeoTargetIDs:   []string{"2826", "2372"},
+		NegativeGeoTargetType: "PRESENCE",
+	}
+	prev, err := runUpdateCampaign(t.Context(), c, args)
+	if err != nil {
+		t.Fatalf("preview: %v", err)
+	}
+	args.Confirm = prev.Token
+	if _, err := runUpdateCampaign(t.Context(), c, args); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	targeted, excluded := countLocationCriteria(t, cap.lastOps())
+	if targeted != 1 || excluded != 2 {
+		t.Fatalf("targeted=%d excluded=%d, want 1 and 2", targeted, excluded)
+	}
+	// The location-option update still shares the single campaign operation.
+	var campaignOps int
+	for _, op := range cap.lastOps() {
+		if outer, _ := op.(map[string]any); outer["campaignOperation"] != nil {
+			campaignOps++
+		}
+	}
+	if campaignOps != 1 {
+		t.Errorf("campaign operations = %d, want 1", campaignOps)
+	}
+}
+
+func TestUpdateCampaign_ExclusionsAloneAreAChange(t *testing.T) {
+	useTempState(t)
+	srv, cap := mutateServer(t)
+	defer srv.Close()
+	c := newTestClient(t, srv)
+
+	args := UpdateCampaignArgs{CustomerID: "1", CampaignID: "5", ExcludeGeoTargetIDs: []string{"2826"}}
+	prev, err := runUpdateCampaign(t.Context(), c, args)
+	if err != nil {
+		t.Fatalf("an exclusion on its own is a change: %v", err)
+	}
+	args.Confirm = prev.Token
+	if _, err := runUpdateCampaign(t.Context(), c, args); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if targeted, excluded := countLocationCriteria(t, cap.lastOps()); targeted != 0 || excluded != 1 {
+		t.Errorf("targeted=%d excluded=%d, want 0 and 1", targeted, excluded)
+	}
+}
+
+func TestUpdateCampaign_RejectsATargetedAndExcludedLocation(t *testing.T) {
+	useTempState(t)
+	args := UpdateCampaignArgs{CustomerID: "1", CampaignID: "5", GeoTargetIDs: []string{"2840"}, ExcludeGeoTargetIDs: []string{"2840"}}
+	// A nil client would panic on any request, so reaching the API fails here.
+	if _, err := runUpdateCampaign(t.Context(), nil, args); err == nil {
+		t.Fatal("targeting and excluding the same place must be rejected")
+	}
+}

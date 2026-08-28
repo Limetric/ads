@@ -288,3 +288,86 @@ func TestDraftCampaign_RejectsInvalidGeoTargetType(t *testing.T) {
 		})
 	}
 }
+
+func TestCampaignLocationCriterion_MarksExclusionsNegative(t *testing.T) {
+	// The positive criterion must not carry the key at all: "negative": false
+	// and an absent negative mean the same thing to Google, but the payload
+	// this CLI has always sent for a targeted location is the bare one.
+	positive := campaignLocationCriterion("customers/1/campaigns/2", "2840", false)
+	create := positive["campaignCriterionOperation"].(map[string]any)["create"].(map[string]any)
+	if _, ok := create["negative"]; ok {
+		t.Errorf("a targeted location should not carry negative: %v", create)
+	}
+	negative := campaignLocationCriterion("customers/1/campaigns/2", "2840", true)
+	create = negative["campaignCriterionOperation"].(map[string]any)["create"].(map[string]any)
+	if create["negative"] != true {
+		t.Errorf("an excluded location must be negative: %v", create)
+	}
+	loc, _ := create["location"].(map[string]any)
+	if loc["geoTargetConstant"] != "geoTargetConstants/2840" {
+		t.Errorf("exclusion targets the wrong constant: %v", create)
+	}
+}
+
+func TestValidateGeoTargetSelection(t *testing.T) {
+	if err := validateGeoTargetSelection([]string{"2840"}, []string{"2826"}); err != nil {
+		t.Fatalf("distinct IDs should be accepted: %v", err)
+	}
+	// An exclusion wins, so listing the same place on both sides silently does
+	// nothing — that is a mistake worth naming.
+	err := validateGeoTargetSelection([]string{"2840", "2826"}, []string{"2840"})
+	if err == nil || !strings.Contains(err.Error(), "2840") {
+		t.Fatalf("expected the overlap to be rejected by ID, got %v", err)
+	}
+	if err := validateGeoTargetSelection(nil, []string{"abc"}); err == nil {
+		t.Fatal("a non-numeric exclusion must be rejected")
+	}
+}
+
+func TestDraftCampaign_ExcludesGeoTargets(t *testing.T) {
+	useTempState(t)
+	srv, cap := mutateServer(t)
+	defer srv.Close()
+	c := newTestClient(t, srv)
+
+	args := DraftCampaignArgs{
+		CustomerID: "1", CampaignName: "C", DailyBudget: 10, BiddingStrategy: "MAXIMIZE_CONVERSIONS",
+		AdGroupName: "AG", GeoTargetIDs: []string{"2840"}, ExcludeGeoTargetIDs: []string{"2826"},
+		NegativeGeoTargetType: "PRESENCE",
+	}
+	prev, err := runDraftCampaign(t.Context(), c, args)
+	if err != nil {
+		t.Fatalf("preview: %v", err)
+	}
+	args.Confirm = prev.Token
+	if _, err := runDraftCampaign(t.Context(), c, args); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	targeted, excluded := countLocationCriteria(t, cap.lastOps())
+	if targeted != 1 || excluded != 1 {
+		t.Fatalf("targeted=%d excluded=%d, want one of each", targeted, excluded)
+	}
+}
+
+// countLocationCriteria counts targeted and excluded location criteria in a
+// staged batch.
+func countLocationCriteria(t *testing.T, ops []any) (targeted, excluded int) {
+	t.Helper()
+	for _, op := range ops {
+		outer, _ := op.(map[string]any)
+		criterionOp, _ := outer["campaignCriterionOperation"].(map[string]any)
+		if criterionOp == nil {
+			continue
+		}
+		create, _ := criterionOp["create"].(map[string]any)
+		if _, isLocation := create["location"]; !isLocation {
+			continue
+		}
+		if create["negative"] == true {
+			excluded++
+		} else {
+			targeted++
+		}
+	}
+	return targeted, excluded
+}
