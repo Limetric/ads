@@ -8,25 +8,33 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// This file pauses, enables, and removes campaigns, ad groups, ads, or keywords.
-// All writes preview first; remove is destructive and is flagged as such in the
-// preview.
+// This file pauses, enables, and removes campaigns, ad groups, ads, keywords, or
+// campaign criteria. All writes preview first; remove is destructive and is
+// flagged as such in the preview.
 
-var validEntityTypes = []string{"campaign", "ad_group", "ad", "keyword"}
+var validEntityTypes = []string{"campaign", "ad_group", "ad", "keyword", "campaign_criterion"}
+
+// compositeIDParts names the two halves of the composite ID an entity type is
+// addressed by, for the error message. Ads and keywords hang off an ad group;
+// campaign criteria hang off a campaign.
+var compositeIDParts = map[string][2]string{
+	"ad":                 {"adGroupId", "adId"},
+	"keyword":            {"adGroupId", "criterionId"},
+	"campaign_criterion": {"campaignId", "criterionId"},
+}
 
 // entityResourceAndOp maps an entity type to its REST resource path and the
 // mutate operation key that targets it. Campaigns and ad groups take a plain
-// numeric ID; ads and keywords live under composite adGroupId~entityId
-// resources — a bare ID would preview fine and fail only at confirm with an
-// invalid-resource-name error (issue #14).
+// numeric ID; ads, keywords, and campaign criteria live under composite
+// parentId~entityId resources — a bare ID would preview fine and fail only at
+// confirm with an invalid-resource-name error (issue #14).
 func entityResourceAndOp(cid, entityType, entityID string) (resource, opKey string, err error) {
-	switch entityType {
-	case "campaign", "ad_group":
-		if _, err := numericID("entity_id", entityID); err != nil {
+	if _, composite := compositeIDParts[entityType]; composite {
+		if err := validateCompositeID(entityType, entityID); err != nil {
 			return "", "", err
 		}
-	case "ad", "keyword":
-		if err := validateCompositeID(entityType, entityID); err != nil {
+	} else if entityType == "campaign" || entityType == "ad_group" {
+		if _, err := numericID("entity_id", entityID); err != nil {
 			return "", "", err
 		}
 	}
@@ -39,20 +47,28 @@ func entityResourceAndOp(cid, entityType, entityID string) (resource, opKey stri
 		return fmt.Sprintf("customers/%s/adGroupAds/%s", cid, entityID), "adGroupAdOperation", nil
 	case "keyword":
 		return fmt.Sprintf("customers/%s/adGroupCriteria/%s", cid, entityID), "adGroupCriterionOperation", nil
+	case "campaign_criterion":
+		return fmt.Sprintf("customers/%s/campaignCriteria/%s", cid, entityID), "campaignCriterionOperation", nil
 	default:
 		return "", "", fmt.Errorf("invalid entity type %q: must be one of: %s", entityType, strings.Join(validEntityTypes, ", "))
 	}
 }
 
-// validateCompositeID checks the adGroupId~entityId shape ads and keywords use.
+// validateCompositeID checks the parentId~entityId shape ads, keywords, and
+// campaign criteria are addressed by.
 func validateCompositeID(entityType, id string) error {
-	parts := strings.Split(id, "~")
-	if len(parts) != 2 {
-		return fmt.Errorf("entity_id for a %s must be the composite adGroupId~%sId (e.g. 111~222), got %q", entityType, entityType, id)
+	parts, ok := compositeIDParts[entityType]
+	if !ok {
+		return fmt.Errorf("invalid entity type %q: must be one of: %s", entityType, strings.Join(validEntityTypes, ", "))
 	}
-	for _, p := range parts {
+	shape := parts[0] + "~" + parts[1]
+	halves := strings.Split(id, "~")
+	if len(halves) != 2 {
+		return fmt.Errorf("entity_id for a %s must be the composite %s (e.g. 111~222), got %q", entityType, shape, id)
+	}
+	for _, p := range halves {
 		if _, err := numericID("entity_id", p); err != nil {
-			return fmt.Errorf("entity_id for a %s must be the composite adGroupId~%sId with numeric parts, got %q", entityType, entityType, id)
+			return fmt.Errorf("entity_id for a %s must be the composite %s with numeric parts, got %q", entityType, shape, id)
 		}
 	}
 	return nil
@@ -61,8 +77,8 @@ func validateCompositeID(entityType, id string) error {
 // EntityActionArgs pauses, enables, or removes a single entity.
 type EntityActionArgs struct {
 	CustomerID string `json:"customer_id,omitempty" jsonschema:"the Google Ads customer ID that owns the entity; omit to use the configured default customer"`
-	EntityType string `json:"entity_type" jsonschema:"one of: campaign, ad_group, ad, keyword"`
-	EntityID   string `json:"entity_id" jsonschema:"the entity ID; for an ad or keyword this is the composite adGroupId~entityId (e.g. 111~222)"`
+	EntityType string `json:"entity_type" jsonschema:"one of: campaign, ad_group, ad, keyword, campaign_criterion"`
+	EntityID   string `json:"entity_id" jsonschema:"the entity ID; for an ad or keyword this is the composite adGroupId~entityId, and for a campaign_criterion the composite campaignId~criterionId (e.g. 111~222) — list a campaign's criterion IDs with campaign_criteria"`
 	Confirm    string `json:"confirm,omitempty" jsonschema:"a confirm token from a previous preview; omit to preview"`
 }
 
@@ -153,8 +169,8 @@ func entityCmd(use, short string, args *EntityActionArgs, run func(context.Conte
 		},
 	}
 	cmd.Flags().StringVar(&args.CustomerID, "customer-id", "", "Google Ads customer ID (falls back to the configured default)")
-	cmd.Flags().StringVar(&args.EntityType, "type", "", "entity type: campaign, ad_group, ad, or keyword (required)")
-	cmd.Flags().StringVar(&args.EntityID, "id", "", "entity ID (required)")
+	cmd.Flags().StringVar(&args.EntityType, "type", "", "entity type: campaign, ad_group, ad, keyword, or campaign_criterion (required)")
+	cmd.Flags().StringVar(&args.EntityID, "id", "", "entity ID; composite adGroupId~entityId for an ad or keyword, campaignId~criterionId for a campaign_criterion (required)")
 	cmd.Flags().StringVar(&args.Confirm, "confirm", "", "confirm token from a previous preview")
 	_ = cmd.MarkFlagRequired("type")
 	_ = cmd.MarkFlagRequired("id")
@@ -162,7 +178,7 @@ func entityCmd(use, short string, args *EntityActionArgs, run func(context.Conte
 }
 
 var (
-	pauseCmd  = entityCmd("pause", "Pause a campaign, ad group, ad, or keyword", &pauseArgs, runPauseEntity)
-	enableCmd = entityCmd("enable", "Enable a campaign, ad group, ad, or keyword", &enableArgs, runEnableEntity)
-	removeCmd = entityCmd("remove", "Remove a campaign, ad group, ad, or keyword (destructive)", &removeArgs, runRemoveEntity)
+	pauseCmd  = entityCmd("pause", "Pause a campaign, ad group, ad, keyword, or campaign criterion", &pauseArgs, runPauseEntity)
+	enableCmd = entityCmd("enable", "Enable a campaign, ad group, ad, keyword, or campaign criterion", &enableArgs, runEnableEntity)
+	removeCmd = entityCmd("remove", "Remove a campaign, ad group, ad, keyword, or campaign criterion (destructive)", &removeArgs, runRemoveEntity)
 )

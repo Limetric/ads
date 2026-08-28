@@ -133,11 +133,15 @@ func addGoogleTools(reg *toolRegistrar, client *Client) {
 		runEnableEntity)
 
 	addTool(reg, client, "remove_entity",
-		"Remove a campaign, ad group, ad, or keyword (destructive). Returns a preview + confirm token; pass Confirm to apply.",
+		"Remove a campaign, ad group, ad, keyword, or campaign_criterion (destructive). A campaign_criterion — a geo target, language, ad-schedule window, or campaign negative keyword — is addressed by the composite campaignId~criterionId; list them with google_campaign_criteria. Returns a preview + confirm token; pass Confirm to apply.",
 		runRemoveEntity)
 
+	addTool(reg, client, "campaign_criteria",
+		"List the criteria attached to a campaign (geo targets, languages, ad-schedule windows, negative keywords), each with the campaignId~criterionId that google_remove_entity takes. Optionally filtered by campaign_criterion.type.",
+		runCampaignCriteria)
+
 	addTool(reg, client, "set_campaign_schedule",
-		"Set campaign ad schedules (day-of-week time windows). Returns a preview + confirm token; pass Confirm to apply.",
+		"Add campaign ad schedules (day-of-week time windows). Additive: existing windows are kept — remove one with google_remove_entity on its campaign_criterion. Returns a preview + confirm token; pass Confirm to apply.",
 		runSetCampaignSchedule)
 
 	addTool(reg, client, "create_portfolio_bidding_strategy",
