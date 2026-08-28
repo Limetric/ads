@@ -77,8 +77,30 @@ type UpdateKeywordBidArgs struct {
 	AdGroupID   string  `json:"ad_group_id" jsonschema:"the ad group ID"`
 	CriterionID string  `json:"criterion_id" jsonschema:"the keyword criterion ID"`
 	CurrentBid  float64 `json:"current_bid" jsonschema:"the current bid in currency units (for the safety check)"`
-	NewBid      float64 `json:"new_bid" jsonschema:"the desired new bid in currency units"`
-	Confirm     string  `json:"confirm,omitempty" jsonschema:"a confirm token from a previous preview; omit to preview"`
+	NewBid      float64 `json:"new_bid" jsonschema:"the desired new bid in currency units; required unless clear_bid is set"`
+	// ClearBid removes the keyword's own bid. Omitting new_bid cannot express
+	// this: every other numeric field in this CLI reads an omitted value as
+	// "leave it alone", and a bid wipe is far too destructive to infer from an
+	// absent flag (issue #50).
+	ClearBid bool   `json:"clear_bid,omitempty" jsonschema:"remove the keyword's own CPC bid so it falls back to the ad group default; cannot be combined with new_bid"`
+	Confirm  string `json:"confirm,omitempty" jsonschema:"a confirm token from a previous preview; omit to preview"`
+}
+
+// validateKeywordBidChange rejects a bid update that names no bid to set. A
+// zero new_bid used to pass straight through and stage a masked cpcBidMicros of
+// 0, which clears the keyword's bid — the destructive reading of an omitted
+// value, arrived at by accident (issue #50).
+func validateKeywordBidChange(args UpdateKeywordBidArgs) error {
+	if args.ClearBid {
+		if args.NewBid != 0 {
+			return fmt.Errorf("clear_bid cannot be combined with new_bid — pass clear_bid alone to drop the keyword's own bid, or new_bid alone to change it")
+		}
+		return nil
+	}
+	if args.NewBid <= 0 {
+		return fmt.Errorf("new_bid must be positive (currency units), got %v — pass clear_bid to remove the keyword's own bid and let it fall back to the ad group default", args.NewBid)
+	}
+	return nil
 }
 
 func runUpdateKeywordBid(ctx context.Context, c *Client, args UpdateKeywordBidArgs) (WriteResult, error) {
@@ -89,6 +111,9 @@ func runUpdateKeywordBid(ctx context.Context, c *Client, args UpdateKeywordBidAr
 	}
 	if args.Confirm != "" {
 		return applyConfirmed(ctx, c, tool, args.Confirm)
+	}
+	if err := validateKeywordBidChange(args); err != nil {
+		return WriteResult{}, err
 	}
 	cid, err := c.resolveCustomerID(args.CustomerID)
 	if err != nil {
@@ -102,28 +127,37 @@ func runUpdateKeywordBid(ctx context.Context, c *Client, args UpdateKeywordBidAr
 	if err != nil {
 		return WriteResult{}, err
 	}
-	// The bid-increase guard needs a trustworthy baseline, so the real bid is
-	// always fetched from the API — a caller-supplied current_bid (omitted or
-	// inflated) used to bypass the guard entirely (issue #12). The supplied
-	// value is only a fallback for keywords with no explicit bid yet.
-	baseline, err := fetchCurrentKeywordBid(ctx, c, cid, adGroupID, criterionID)
-	if err != nil {
-		return WriteResult{}, toolError(tool, fmt.Errorf("could not verify the current bid for the bid-increase guard: %w", err))
-	}
-	if baseline <= 0 {
-		baseline = args.CurrentBid
-	}
-	if err := checkBidIncrease(baseline, args.NewBid, cfg); err != nil {
-		return WriteResult{}, toolError(tool, err)
-	}
 	resource := fmt.Sprintf("customers/%s/adGroupCriteria/%s~%s", cid, adGroupID, criterionID)
+	update := map[string]any{"resourceName": resource}
+	summary := fmt.Sprintf("Clear keyword %s~%s CPC bid so it falls back to the ad group default", args.AdGroupID, args.CriterionID)
+	if !args.ClearBid {
+		// The bid-increase guard needs a trustworthy baseline, so the real bid
+		// is always fetched from the API — a caller-supplied current_bid
+		// (omitted or inflated) used to bypass the guard entirely (issue #12).
+		// The supplied value is only a fallback for keywords with no explicit
+		// bid yet. A clear is never an increase, so it skips the round trip.
+		baseline, err := fetchCurrentKeywordBid(ctx, c, cid, adGroupID, criterionID)
+		if err != nil {
+			return WriteResult{}, toolError(tool, fmt.Errorf("could not verify the current bid for the bid-increase guard: %w", err))
+		}
+		if baseline <= 0 {
+			baseline = args.CurrentBid
+		}
+		if err := checkBidIncrease(baseline, args.NewBid, cfg); err != nil {
+			return WriteResult{}, toolError(tool, err)
+		}
+		update["cpcBidMicros"] = microsString(dollarsToMicros(args.NewBid))
+		summary = fmt.Sprintf("Update keyword %s~%s CPC bid to %.2f", args.AdGroupID, args.CriterionID, args.NewBid)
+	}
+	// A clear masks cpcBidMicros while leaving it out of the update: Google
+	// reads the masked-but-absent int64 as unset, which is what makes the
+	// keyword inherit the ad group default rather than bid a literal zero.
 	op := map[string]any{
 		"adGroupCriterionOperation": map[string]any{
-			"update":     map[string]any{"resourceName": resource, "cpcBidMicros": microsString(dollarsToMicros(args.NewBid))},
+			"update":     update,
 			"updateMask": "cpcBidMicros",
 		},
 	}
-	summary := fmt.Sprintf("Update keyword %s~%s CPC bid to %.2f", args.AdGroupID, args.CriterionID, args.NewBid)
 	return previewMutate(tool, cid, summary, []any{op})
 }
 
@@ -225,10 +259,14 @@ func init() {
 	biddingKeywordBidCmd.Flags().StringVar(&keywordBidArgs.AdGroupID, "ad-group-id", "", "ad group ID (required)")
 	biddingKeywordBidCmd.Flags().StringVar(&keywordBidArgs.CriterionID, "criterion-id", "", "keyword criterion ID (required)")
 	biddingKeywordBidCmd.Flags().Float64Var(&keywordBidArgs.CurrentBid, "current-bid", 0, "current bid in currency units (for the safety check)")
-	biddingKeywordBidCmd.Flags().Float64Var(&keywordBidArgs.NewBid, "new-bid", 0, "new bid in currency units")
+	biddingKeywordBidCmd.Flags().Float64Var(&keywordBidArgs.NewBid, "new-bid", 0, "new bid in currency units (required unless --clear-bid)")
+	biddingKeywordBidCmd.Flags().BoolVar(&keywordBidArgs.ClearBid, "clear-bid", false, "remove the keyword's own CPC bid so it falls back to the ad group default")
 	biddingKeywordBidCmd.Flags().StringVar(&keywordBidArgs.Confirm, "confirm", "", "confirm token from a previous preview")
 	_ = biddingKeywordBidCmd.MarkFlagRequired("ad-group-id")
 	_ = biddingKeywordBidCmd.MarkFlagRequired("criterion-id")
+	// Naming neither used to mean "clear the bid"; the intent is now stated.
+	biddingKeywordBidCmd.MarkFlagsOneRequired("new-bid", "clear-bid")
+	biddingKeywordBidCmd.MarkFlagsMutuallyExclusive("new-bid", "clear-bid")
 
 	biddingCmd.AddCommand(biddingPortfolioCmd, biddingKeywordBidCmd)
 }

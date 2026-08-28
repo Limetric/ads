@@ -184,6 +184,25 @@ is changed on the shared strategy itself. A clear flag cannot be combined with
 the target value it removes, and it touches only the target — a
 `MAXIMIZE_CONVERSION_VALUE` campaign keeps its ROAS degradation tolerance.
 
+### Keyword bids
+
+`bidding set-keyword-bid` takes `--new-bid` (currency units), which must be
+positive. Omitting it is an error rather than a bid of zero — a keyword whose
+`cpc_bid_micros` is cleared falls back to its ad group's default bid, and that
+is too destructive to infer from a missing flag. Ask for it by name:
+
+```bash
+# Set an explicit keyword bid.
+ads google bidding set-keyword-bid --ad-group-id 111 --criterion-id 222 --new-bid 1.50
+
+# Drop the keyword's own bid; it inherits the ad group default from here on.
+ads google bidding set-keyword-bid --ad-group-id 111 --criterion-id 222 --clear-bid
+```
+
+The two flags are mutually exclusive, and exactly one is required. Bid
+*increases* are still measured against the keyword's real current bid, fetched
+from the API; a clear is never an increase, so it skips that lookup.
+
 ### Portfolio (shared) bidding strategies
 
 `--bidding-strategy` sets a **standard** strategy, which each campaign learns on

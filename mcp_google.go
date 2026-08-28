@@ -145,7 +145,7 @@ func addGoogleTools(reg *toolRegistrar, client *Client) {
 		runCreatePortfolioBidding)
 
 	addTool(reg, client, "update_keyword_bid",
-		"Update a keyword's CPC bid (enforces the bid-increase guard). Returns a preview + confirm token; pass Confirm to apply.",
+		"Update a keyword's CPC bid (enforces the bid-increase guard). NewBid is required and must be positive; set ClearBid to remove the keyword's own bid so it falls back to the ad group default. Returns a preview + confirm token; pass Confirm to apply.",
 		runUpdateKeywordBid)
 
 	addTool(reg, client, "create_custom_audience",
