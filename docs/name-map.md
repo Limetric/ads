@@ -23,11 +23,11 @@ actually landed.
    rename, and keeping aliases would re-take the exact names the next platform
    wants.
 
-> #36 says 52 MCP tools; the tree actually registers **50** — 49 at the time of
+> #36 says 52 MCP tools; the tree actually registers **51** — 49 at the time of
 > the rename, plus what has landed since (marked `—` in the Old column). The
 > count in the issue is stale, not a missing group.
 
-## MCP tools (50)
+## MCP tools (51)
 
 Uniform: every tool gains a `google_` prefix, nothing else changes. Descriptions,
 `Args` structs, and handlers are untouched.
