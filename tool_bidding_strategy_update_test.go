@@ -255,6 +255,27 @@ func TestUpdatePortfolioBidding_RejectsMismatchedTargetBeforeStaging(t *testing.
 	}
 }
 
+func TestUpdatePortfolioBidding_RejectsAStrayTargetRidingAlong(t *testing.T) {
+	useTempState(t)
+	var mutates int
+	srv := strategyUpdateServer(t, "TARGET_IMPRESSION_SHARE", "1", nil, &mutates)
+	defer srv.Close()
+	c := newTestClient(t, srv)
+
+	// The strategy's own target is present and valid, so an earlier version
+	// staged the impression-share change and silently dropped the CPA. On a
+	// resource that moves every attached campaign, applying less than was asked
+	// for is worse than refusing.
+	args := UpdatePortfolioBiddingArgs{CustomerID: "1", StrategyID: "9", ImpressionSharePercent: 60, TargetCPA: 30}
+	_, err := runUpdatePortfolioBidding(t.Context(), c, args)
+	if err == nil || !strings.Contains(err.Error(), "target_cpa") {
+		t.Fatalf("expected the stray target to be named, got %v", err)
+	}
+	if mutates != 0 {
+		t.Errorf("a rejected update reached the API %d time(s)", mutates)
+	}
+}
+
 func TestUpdatePortfolioBidding_RejectsAManagerOwnedStrategy(t *testing.T) {
 	useTempState(t)
 	var mutates int

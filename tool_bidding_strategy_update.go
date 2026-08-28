@@ -40,10 +40,26 @@ type UpdatePortfolioBiddingArgs struct {
 	Confirm                 string  `json:"confirm,omitempty" jsonschema:"a confirm token from a previous preview; omit to preview"`
 }
 
+// suppliedTargetArgs names every target argument the caller actually passed,
+// in the wording portfolioTargetArg uses, so a mismatch can name both what was
+// given and what the strategy takes.
+func (a UpdatePortfolioBiddingArgs) suppliedTargetArgs() []string {
+	var supplied []string
+	if a.TargetCPA != 0 {
+		supplied = append(supplied, "target_cpa")
+	}
+	if a.TargetROAS != 0 {
+		supplied = append(supplied, "target_roas")
+	}
+	if strings.TrimSpace(a.ImpressionShareLocation) != "" || a.ImpressionSharePercent != 0 {
+		supplied = append(supplied, "impression_share_location/impression_share_percent")
+	}
+	return supplied
+}
+
 // wantsTarget reports whether the arguments ask for a target change at all.
 func (a UpdatePortfolioBiddingArgs) wantsTarget() bool {
-	return a.TargetCPA != 0 || a.TargetROAS != 0 ||
-		strings.TrimSpace(a.ImpressionShareLocation) != "" || a.ImpressionSharePercent != 0
+	return len(a.suppliedTargetArgs()) > 0
 }
 
 // validatePortfolioBiddingUpdate rejects arguments that contradict each other
@@ -94,55 +110,53 @@ func impressionShareMicros(percent float64) int64 {
 //
 // A strategy's type is fixed after creation, so a target that belongs to a
 // different type means the caller is holding the wrong strategy or the wrong
-// argument; either way it fails here rather than at confirm.
+// argument; either way it fails here rather than at confirm. EVERY supplied
+// target is checked, not just whether the matching one is present: a stray
+// argument that rode along would otherwise be silently discarded, and a
+// confirmed write would change less than the operator asked for — on a resource
+// that moves every attached campaign at once.
 func applyPortfolioTargetUpdate(strategy portfolioStrategyInfo, args UpdatePortfolioBiddingArgs, update map[string]any, mask *[]string) (string, error) {
-	if !args.wantsTarget() {
+	supplied := args.suppliedTargetArgs()
+	if len(supplied) == 0 {
 		return "", nil
 	}
 	want := portfolioTargetArg(strategy.Type)
 	if want == "" {
 		return "", fmt.Errorf("portfolio bidding strategy %s bids with %s, which carries no target this tool can change — pass name on its own to rename it", strategy.ID, strategy.Type)
 	}
-	mismatch := func() error {
-		return fmt.Errorf("portfolio bidding strategy %s (%q) bids with %s, whose target is %s — the argument passed belongs to a different strategy type, and a shared strategy's type cannot be changed after creation", strategy.ID, strategy.Name, strategy.Type, want)
+	if len(supplied) != 1 || supplied[0] != want {
+		var wrong []string
+		for _, arg := range supplied {
+			if arg != want {
+				wrong = append(wrong, arg)
+			}
+		}
+		return "", fmt.Errorf("portfolio bidding strategy %s (%q) bids with %s, whose target is %s — %s does not apply to it, and a shared strategy's type cannot be changed after creation",
+			strategy.ID, strategy.Name, strategy.Type, want, strings.Join(wrong, " and "))
 	}
 	switch strategy.Type {
-	case "TARGET_CPA", "MAXIMIZE_CONVERSIONS":
-		if args.TargetCPA == 0 {
-			return "", mismatch()
-		}
-		leaf := map[string]any{"targetCpaMicros": microsString(dollarsToMicros(args.TargetCPA))}
-		if strategy.Type == "TARGET_CPA" {
-			update["targetCpa"] = leaf
-			*mask = append(*mask, "targetCpa.targetCpaMicros")
-		} else {
-			update["maximizeConversions"] = leaf
-			*mask = append(*mask, "maximizeConversions.targetCpaMicros")
-		}
+	case "TARGET_CPA":
+		update["targetCpa"] = map[string]any{"targetCpaMicros": microsString(dollarsToMicros(args.TargetCPA))}
+		*mask = append(*mask, "targetCpa.targetCpaMicros")
 		return fmt.Sprintf("target CPA %.2f", args.TargetCPA), nil
-	case "TARGET_ROAS", "MAXIMIZE_CONVERSION_VALUE":
-		if args.TargetROAS == 0 {
-			return "", mismatch()
-		}
-		leaf := map[string]any{"targetRoas": args.TargetROAS}
-		if strategy.Type == "TARGET_ROAS" {
-			update["targetRoas"] = leaf
-			*mask = append(*mask, "targetRoas.targetRoas")
-		} else {
-			update["maximizeConversionValue"] = leaf
-			*mask = append(*mask, "maximizeConversionValue.targetRoas")
-		}
+	case "MAXIMIZE_CONVERSIONS":
+		update["maximizeConversions"] = map[string]any{"targetCpaMicros": microsString(dollarsToMicros(args.TargetCPA))}
+		*mask = append(*mask, "maximizeConversions.targetCpaMicros")
+		return fmt.Sprintf("target CPA %.2f", args.TargetCPA), nil
+	case "TARGET_ROAS":
+		update["targetRoas"] = map[string]any{"targetRoas": args.TargetROAS}
+		*mask = append(*mask, "targetRoas.targetRoas")
+		return fmt.Sprintf("target ROAS %v", args.TargetROAS), nil
+	case "MAXIMIZE_CONVERSION_VALUE":
+		update["maximizeConversionValue"] = map[string]any{"targetRoas": args.TargetROAS}
+		*mask = append(*mask, "maximizeConversionValue.targetRoas")
 		return fmt.Sprintf("target ROAS %v", args.TargetROAS), nil
 	case "TARGET_IMPRESSION_SHARE":
-		location := strings.ToUpper(strings.TrimSpace(args.ImpressionShareLocation))
-		if location == "" && args.ImpressionSharePercent == 0 {
-			return "", mismatch()
-		}
 		// Only the supplied side is masked: location and fraction are separate
 		// leaves, and masking an omitted one would reset it.
 		leaf := map[string]any{}
 		var parts []string
-		if location != "" {
+		if location := strings.ToUpper(strings.TrimSpace(args.ImpressionShareLocation)); location != "" {
 			leaf["location"] = location
 			*mask = append(*mask, "targetImpressionShare.location")
 			parts = append(parts, location)
@@ -155,7 +169,9 @@ func applyPortfolioTargetUpdate(strategy portfolioStrategyInfo, args UpdatePortf
 		update["targetImpressionShare"] = leaf
 		return "impression share target " + strings.Join(parts, ", "), nil
 	default:
-		return "", mismatch()
+		// portfolioTargetArg returned a target for this type, so every type it
+		// names must be handled above.
+		return "", fmt.Errorf("portfolio bidding strategy %s bids with %s, which this tool cannot set a target on", strategy.ID, strategy.Type)
 	}
 }
 
