@@ -249,8 +249,10 @@ ads google webpage-targets add --ad-group-id 222 \
 
 Conditions are `OPERAND=ARGUMENT` — `URL`, `CATEGORY`, `PAGE_TITLE`,
 `PAGE_CONTENT`, or `CUSTOM_LABEL` — and repeating `--condition` narrows the
-target, since Google AND-s them. A target takes at most three; split any
-extras into a target of their own. `CATEGORY` arguments come from the
+target, since Google AND-s them. A target takes at most three, and a fourth
+cannot be moved to a second target to get around it: targets match
+independently, so a second one *widens* what is targeted rather than narrowing
+it. Express the conjunction in three conditions or fewer. `CATEGORY` arguments come from the
 `domain_category` resource, which `ads google search` can read once Google has
 crawled the site. `--cpc-bid-micros` gives one target its own bid.
 

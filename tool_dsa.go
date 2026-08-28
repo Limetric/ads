@@ -165,7 +165,10 @@ func (t WebpageTarget) validate(index int) error {
 		return fmt.Errorf("%s (%q): at least one condition is required — pass e.g. URL=/specialoffers, or set all_webpages to target every page of the domain", label, t.CriterionName)
 	}
 	if len(t.Conditions) > webpageMaxConditions {
-		return fmt.Errorf("%s (%q): a dynamic ad target takes at most %d conditions, got %d — the conditions are AND-ed, so split the extras into their own target", label, t.CriterionName, webpageMaxConditions, len(t.Conditions))
+		// Deliberately steers away from splitting the extras into a second
+		// target: separate targets match independently rather than narrowing
+		// one another, so that would widen what is targeted, not preserve it.
+		return fmt.Errorf("%s (%q): a dynamic ad target takes at most %d conditions, got %d — they are AND-ed within one target, and moving the extras to a second target would widen what is targeted rather than narrow it, because targets match independently; express the conjunction in %d conditions or fewer", label, t.CriterionName, webpageMaxConditions, len(t.Conditions), webpageMaxConditions)
 	}
 	if t.CpcBidMicros < 0 {
 		return fmt.Errorf("%s (%q): cpc_bid_micros must be positive (micros), got %d", label, t.CriterionName, t.CpcBidMicros)
