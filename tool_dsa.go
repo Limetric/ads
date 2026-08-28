@@ -112,6 +112,13 @@ func dsaCampaignSummary(setting map[string]any) string {
 
 // --- Webpage criteria (dynamic ad targets) ---
 
+// webpageMaxConditions is the ceiling Google puts on one dynamic ad target:
+// "a WebpageInfo object which allows between one and three conditions"
+// (developers.google.com/google-ads/api/docs/dynamic-search-ads/create-dynamic-search-ads).
+// A fourth is rejected at confirm, and in a batch of targets that leaves the
+// valid ones applied, so it has to fail while nothing is staged.
+const webpageMaxConditions = 3
+
 // webpageConditionOperands are the operands a dynamic ad target can match on.
 // Each condition names one; the conditions on a target are AND-ed, so a target
 // matches a page only when every one of them holds.
@@ -137,7 +144,7 @@ type WebpageCondition struct {
 // the part of the campaign's site a dynamic ad group advertises.
 type WebpageTarget struct {
 	CriterionName string             `json:"criterion_name" jsonschema:"a name for the target; Google requires one and uses it to identify and sort dynamic ad targets"`
-	Conditions    []WebpageCondition `json:"conditions,omitempty" jsonschema:"the conditions a page must ALL match; omit them and set all_webpages to target the whole site"`
+	Conditions    []WebpageCondition `json:"conditions,omitempty" jsonschema:"1-3 conditions a page must ALL match; omit them and set all_webpages to target the whole site"`
 	AllWebpages   bool               `json:"all_webpages,omitempty" jsonschema:"target every page of the campaign's domain; mutually exclusive with conditions"`
 	CpcBidMicros  int64              `json:"cpc_bid_micros,omitempty" jsonschema:"optional CPC bid in micros for this target, overriding the ad group default"`
 }
@@ -156,6 +163,9 @@ func (t WebpageTarget) validate(index int) error {
 	}
 	if !t.AllWebpages && len(t.Conditions) == 0 {
 		return fmt.Errorf("%s (%q): at least one condition is required — pass e.g. URL=/specialoffers, or set all_webpages to target every page of the domain", label, t.CriterionName)
+	}
+	if len(t.Conditions) > webpageMaxConditions {
+		return fmt.Errorf("%s (%q): a dynamic ad target takes at most %d conditions, got %d — the conditions are AND-ed, so split the extras into their own target", label, t.CriterionName, webpageMaxConditions, len(t.Conditions))
 	}
 	if t.CpcBidMicros < 0 {
 		return fmt.Errorf("%s (%q): cpc_bid_micros must be positive (micros), got %d", label, t.CriterionName, t.CpcBidMicros)
@@ -465,7 +475,7 @@ func init() {
 	tf.StringVar(&addWebpageTargetsArgs.CustomerID, "customer-id", "", "Google Ads customer ID (falls back to the configured default)")
 	tf.StringVar(&addWebpageTargetsArgs.AdGroupID, "ad-group-id", "", "dynamic ad group ID (required)")
 	tf.StringVar(&webpageTarget.CriterionName, "criterion-name", "", "name for the dynamic ad target (required)")
-	tf.StringArrayVar(&webpageConditionFlags, "condition", nil, "target condition as OPERAND=ARGUMENT, e.g. URL=/specialoffers (repeatable; conditions are AND-ed)")
+	tf.StringArrayVar(&webpageConditionFlags, "condition", nil, "target condition as OPERAND=ARGUMENT, e.g. URL=/specialoffers (repeatable up to 3; conditions are AND-ed)")
 	tf.BoolVar(&webpageTarget.AllWebpages, "all-webpages", false, "target every page of the campaign's domain (mutually exclusive with --condition)")
 	tf.Int64Var(&webpageTarget.CpcBidMicros, "cpc-bid-micros", 0, "CPC bid in micros for this target, overriding the ad group default")
 	tf.StringVar(&addWebpageTargetsArgs.Confirm, "confirm", "", "confirm token from a previous preview")

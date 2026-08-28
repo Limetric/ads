@@ -346,6 +346,19 @@ func TestAddWebpageTargets_Validation(t *testing.T) {
 			wantErr: "needs an argument",
 		},
 		{
+			// Google allows between one and three conditions on a target; a
+			// fourth is rejected at confirm, and in a batch that leaves the
+			// other targets applied.
+			name: "more than three conditions",
+			targets: []WebpageTarget{{CriterionName: "T", Conditions: []WebpageCondition{
+				{Operand: "URL", Argument: "/a"},
+				{Operand: "PAGE_TITLE", Argument: "b"},
+				{Operand: "PAGE_CONTENT", Argument: "c"},
+				{Operand: "CUSTOM_LABEL", Argument: "d"},
+			}}},
+			wantErr: "at most 3 conditions",
+		},
+		{
 			name:    "negative bid",
 			targets: []WebpageTarget{{CriterionName: "T", AllWebpages: true, CpcBidMicros: -1}},
 			wantErr: "must be positive",
@@ -609,5 +622,34 @@ func TestAddWebpageTargets_TrimsConditionArguments(t *testing.T) {
 	first, _ := conditions[0].(map[string]any)
 	if first["argument"] != "/sale" {
 		t.Errorf("argument = %q, want it trimmed to \"/sale\"", first["argument"])
+	}
+}
+
+func TestAddWebpageTargets_AcceptsThreeConditions(t *testing.T) {
+	useTempState(t)
+	srv, cap := dsaServer(t, "SEARCH_DYNAMIC_ADS")
+	defer srv.Close()
+	c := newTestClient(t, srv)
+
+	// Three is the documented ceiling, not the first value over it.
+	args := AddWebpageTargetsArgs{
+		CustomerID: "1", AdGroupID: "9",
+		Targets: []WebpageTarget{{CriterionName: "T", Conditions: []WebpageCondition{
+			{Operand: "URL", Argument: "/a"},
+			{Operand: "PAGE_TITLE", Argument: "b"},
+			{Operand: "PAGE_CONTENT", Argument: "c"},
+		}}},
+	}
+	prev, err := runAddWebpageTargets(t.Context(), c, args)
+	if err != nil {
+		t.Fatalf("three conditions must be accepted: %v", err)
+	}
+	args.Confirm = prev.Token
+	if _, err := runAddWebpageTargets(t.Context(), c, args); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	conditions, _ := webpageOf(t, cap.firstOp(t))["conditions"].([]any)
+	if len(conditions) != 3 {
+		t.Errorf("expected 3 conditions staged, got %v", conditions)
 	}
 }

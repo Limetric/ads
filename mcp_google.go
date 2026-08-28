@@ -181,7 +181,7 @@ func addGoogleTools(reg *toolRegistrar, client *Client) {
 		runDraftDynamicSearchAd)
 
 	addTool(reg, client, "add_webpage_targets",
-		"Add dynamic ad targets (webpage criteria) to a SEARCH_DYNAMIC_ADS ad group — the part of the site its dynamic search ads advertise, and what a dynamic ad group matches against instead of keywords. Each target needs a CriterionName plus either Conditions (operand URL, CATEGORY, PAGE_TITLE, PAGE_CONTENT, or CUSTOM_LABEL with an argument; AND-ed together) or AllWebpages to target the whole domain. Returns a preview + confirm token; pass Confirm to apply.",
+		"Add dynamic ad targets (webpage criteria) to a SEARCH_DYNAMIC_ADS ad group — the part of the site its dynamic search ads advertise, and what a dynamic ad group matches against instead of keywords. Each target needs a CriterionName plus either 1-3 Conditions (operand URL, CATEGORY, PAGE_TITLE, PAGE_CONTENT, or CUSTOM_LABEL with an argument; AND-ed together) or AllWebpages to target the whole domain. Returns a preview + confirm token; pass Confirm to apply.",
 		runAddWebpageTargets)
 
 	addTool(reg, client, "draft_keywords",
