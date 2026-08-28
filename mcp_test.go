@@ -167,3 +167,24 @@ func TestToolError(t *testing.T) {
 		t.Error("toolError should wrap the underlying error with %w")
 	}
 }
+
+func TestMCP_ClearKeywordBidNeedsNoBidValue(t *testing.T) {
+	useTempState(t)
+	srv, _ := mutateServer(t)
+	defer srv.Close()
+	cs := mcpSession(t, newTestClient(t, srv))
+
+	// The input schema is derived from UpdateKeywordBidArgs by reflection, so a
+	// required new_bid would have the MCP layer reject a clear before the
+	// handler ever saw it — and the caller has no bid to name.
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "google_update_keyword_bid",
+		Arguments: map[string]any{"customer_id": "1", "ad_group_id": "10", "criterion_id": "20", "clear_bid": true},
+	})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("clearing a keyword bid over MCP failed: %+v", res.Content)
+	}
+}
