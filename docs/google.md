@@ -181,7 +181,8 @@ Each flag applies only to its own strategy: `TARGET_CPA` and `TARGET_ROAS`
 *require* a target, so a campaign on one of those switches strategy instead
 (`--bidding-strategy MAXIMIZE_CONVERSIONS`), and a portfolio strategy's target
 is changed on the shared strategy itself. A clear flag cannot be combined with
-the target value it removes.
+the target value it removes, and it touches only the target — a
+`MAXIMIZE_CONVERSION_VALUE` campaign keeps its ROAS degradation tolerance.
 
 ### Portfolio (shared) bidding strategies
 

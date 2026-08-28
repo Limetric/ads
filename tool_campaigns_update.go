@@ -118,15 +118,23 @@ type clearTargetRequest struct {
 	flag     string // argument name, for error messages
 	label    string // the target's human name, for the preview summary
 	strategy string // the only bidding strategy this clear applies to
+	field    string // the campaign sub-message holding the target
+	mask     string // the single leaf the clear masks
 }
 
 // clearTargetFor returns the clear the arguments ask for, or nil for none.
 func clearTargetFor(args UpdateCampaignArgs) *clearTargetRequest {
 	switch {
 	case args.ClearTargetCPA:
-		return &clearTargetRequest{flag: "clear_target_cpa", label: "target CPA", strategy: "MAXIMIZE_CONVERSIONS"}
+		return &clearTargetRequest{
+			flag: "clear_target_cpa", label: "target CPA", strategy: "MAXIMIZE_CONVERSIONS",
+			field: "maximizeConversions", mask: "maximizeConversions.targetCpaMicros",
+		}
 	case args.ClearTargetROAS:
-		return &clearTargetRequest{flag: "clear_target_roas", label: "target ROAS", strategy: "MAXIMIZE_CONVERSION_VALUE"}
+		return &clearTargetRequest{
+			flag: "clear_target_roas", label: "target ROAS", strategy: "MAXIMIZE_CONVERSION_VALUE",
+			field: "maximizeConversionValue", mask: "maximizeConversionValue.targetRoas",
+		}
 	default:
 		return nil
 	}
@@ -479,7 +487,18 @@ func runUpdateCampaign(ctx context.Context, c *Client, args UpdateCampaignArgs) 
 	update := map[string]any{"resourceName": campaignResource}
 	var mask []string
 	var portfolio portfolioStrategyInfo
-	if strategy != "" {
+	switch {
+	case clearTarget != nil:
+		// A clear masks the target leaf and nothing else. Reusing the
+		// strategy-selection mask would also blank the leaves that merely
+		// travel with the strategy: MAXIMIZE_CONVERSION_VALUE's
+		// target_roas_tolerance_percent_millis is a separate campaign-level
+		// setting, and the operator asked only for the target. Masking one leaf
+		// still selects the strategy's oneof member, so the campaign keeps
+		// bidding with it.
+		update[clearTarget.field] = map[string]any{}
+		mask = append(mask, clearTarget.mask)
+	case strategy != "":
 		if err := applyBiddingStrategyUpdate(update, &mask, strategy, args.TargetCPA, args.TargetROAS); err != nil {
 			return WriteResult{}, err
 		}

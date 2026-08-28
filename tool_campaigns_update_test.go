@@ -1012,7 +1012,7 @@ func TestUpdateCampaign_ClearTargetRemovesOptionalTarget(t *testing.T) {
 			args:        UpdateCampaignArgs{ClearTargetROAS: true},
 			current:     "MAXIMIZE_CONVERSION_VALUE",
 			wantKey:     "maximizeConversionValue",
-			wantMask:    "maximizeConversionValue.targetRoas,maximizeConversionValue.targetRoasTolerancePercentMillis",
+			wantMask:    "maximizeConversionValue.targetRoas",
 			wantSummary: "Remove the target ROAS from campaign 5",
 		},
 		{
@@ -1062,6 +1062,12 @@ func TestUpdateCampaign_ClearTargetRemovesOptionalTarget(t *testing.T) {
 			update, mask := campaignUpdateOp(t, mutateBody)
 			if mask != tc.wantMask {
 				t.Errorf("updateMask = %q, want %q", mask, tc.wantMask)
+			}
+			// Only the target leaf may be masked. The strategy-selection mask
+			// also covers target_roas_tolerance_percent_millis, a separate
+			// campaign-level setting a clear must not blank.
+			if strings.Contains(mask, "Tolerance") {
+				t.Errorf("updateMask = %q, want it to leave the ROAS degradation tolerance alone", mask)
 			}
 			message, ok := update[tc.wantKey].(map[string]any)
 			if !ok || len(message) != 0 {
