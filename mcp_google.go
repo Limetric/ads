@@ -144,6 +144,10 @@ func addGoogleTools(reg *toolRegistrar, client *Client) {
 		"Create a portfolio bidding strategy (TARGET_CPA/ROAS/IMPRESSION_SHARE). Returns a preview + confirm token; pass Confirm to apply.",
 		runCreatePortfolioBidding)
 
+	addTool(reg, client, "update_portfolio_bidding_strategy",
+		"Rename a portfolio (shared) bidding strategy or change the target its type carries (TargetCPA, TargetROAS, or ImpressionShareLocation/ImpressionSharePercent). This is where an attached campaign's target lives, so a change moves every attached campaign at once and takes two confirmations; a rename takes one. Returns a preview + confirm token; pass Confirm to apply.",
+		runUpdatePortfolioBidding)
+
 	addTool(reg, client, "update_keyword_bid",
 		"Update a keyword's CPC bid (enforces the bid-increase guard). Returns a preview + confirm token; pass Confirm to apply.",
 		runUpdateKeywordBid)
