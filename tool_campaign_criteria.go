@@ -99,7 +99,10 @@ func runCampaignCriteria(ctx context.Context, c *Client, args CampaignCriteriaAr
 	return CampaignCriteriaResult{Criteria: rows, TotalCount: len(rows), selectFields: fields}, nil
 }
 
-// removeEntityIDField is the synthetic column enrichRemoveEntityIDs adds.
+// removeEntityIDField is the synthetic column enrichRemoveEntityIDs adds, and
+// the key it is emitted under. resolveField looks a field path up verbatim
+// before trying its camelCase form, so the one name serves both the JSON
+// payload and the table/CSV column.
 const removeEntityIDField = "remove_entity_id"
 
 // enrichRemoveEntityIDs adds the composite campaignId~criterionId that
@@ -123,7 +126,10 @@ func enrichRemoveEntityIDs(rows []json.RawMessage) []json.RawMessage {
 		if campaignID == "" || criterionID == "" {
 			continue
 		}
-		row[snakeToCamel(removeEntityIDField)] = campaignID + "~" + criterionID
+		// Under the documented snake_case name, not the camelCase the Google
+		// fields around it use: this is our column, and docs, table output, and
+		// a JSON consumer must all be able to name the same key.
+		row[removeEntityIDField] = campaignID + "~" + criterionID
 		if enriched, err := json.Marshal(row); err == nil {
 			out[i] = enriched
 		}

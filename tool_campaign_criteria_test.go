@@ -54,8 +54,10 @@ func TestCampaignCriteria_ListsWithRemovalIDs(t *testing.T) {
 	}
 	// The whole point of the read side: the ID remove_entity takes, ready to
 	// pass through, rather than one the caller assembles by hand.
+	// The key the docs name, so a consumer reading .criteria[].remove_entity_id
+	// gets the ID rather than null.
 	var row struct {
-		RemoveEntityID string `json:"removeEntityId"`
+		RemoveEntityID string `json:"remove_entity_id"`
 	}
 	if err := json.Unmarshal(res.Criteria[0], &row); err != nil {
 		t.Fatalf("row is not JSON: %v", err)
@@ -68,6 +70,28 @@ func TestCampaignCriteria_ListsWithRemovalIDs(t *testing.T) {
 	}
 	if row.RemoveEntityID != "111~333" {
 		t.Errorf("removeEntityId = %q, want 111~333", row.RemoveEntityID)
+	}
+}
+
+func TestCampaignCriteria_RemovalIDRendersAsAColumn(t *testing.T) {
+	useTempState(t)
+	srv := criteriaServer(t, nil, criteriaRows)
+	defer srv.Close()
+	c := newTestClient(t, srv)
+
+	res, err := runCampaignCriteria(t.Context(), c, CampaignCriteriaArgs{CustomerID: "1", CampaignID: "111"})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	// The synthetic column has to resolve for --format table/csv too, not just
+	// in the JSON payload.
+	rows, fields := res.tableRows()
+	if len(fields) == 0 || fields[len(fields)-1] != removeEntityIDField {
+		t.Fatalf("fields = %v, want %s last", fields, removeEntityIDField)
+	}
+	table := formatTable(rows, fields)
+	if !strings.Contains(table, "111~222") {
+		t.Errorf("table output does not carry the removal ID:\n%s", table)
 	}
 }
 
@@ -112,7 +136,7 @@ func TestEnrichRemoveEntityIDs_PassesThroughIncompleteRows(t *testing.T) {
 		json.RawMessage(`not json`),
 	}
 	for i, got := range enrichRemoveEntityIDs(rows) {
-		if strings.Contains(string(got), "removeEntityId") {
+		if strings.Contains(string(got), removeEntityIDField) {
 			t.Errorf("row %d gained a removal ID it cannot support: %s", i, got)
 		}
 	}
