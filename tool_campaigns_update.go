@@ -110,6 +110,58 @@ func validateBiddingTargetValues(cpa, roas float64) error {
 	return nil
 }
 
+// clearTargetRequest describes a request to remove a campaign-level bidding
+// target. Only the two "maximize" strategies carry an optional target, so each
+// clear is valid for exactly one strategy — TARGET_CPA and TARGET_ROAS require
+// theirs, and a campaign on one of those switches strategy instead of clearing.
+type clearTargetRequest struct {
+	flag     string // argument name, for error messages
+	label    string // the target's human name, for the preview summary
+	strategy string // the only bidding strategy this clear applies to
+	field    string // the campaign sub-message holding the target
+	mask     string // the single leaf the clear masks
+}
+
+// clearTargetFor returns the clear the arguments ask for, or nil for none.
+func clearTargetFor(args UpdateCampaignArgs) *clearTargetRequest {
+	switch {
+	case args.ClearTargetCPA:
+		return &clearTargetRequest{
+			flag: "clear_target_cpa", label: "target CPA", strategy: "MAXIMIZE_CONVERSIONS",
+			field: "maximizeConversions", mask: "maximizeConversions.targetCpaMicros",
+		}
+	case args.ClearTargetROAS:
+		return &clearTargetRequest{
+			flag: "clear_target_roas", label: "target ROAS", strategy: "MAXIMIZE_CONVERSION_VALUE",
+			field: "maximizeConversionValue", mask: "maximizeConversionValue.targetRoas",
+		}
+	default:
+		return nil
+	}
+}
+
+// validateClearTargetArgs rejects clear requests that contradict the rest of the
+// update, before any API round trip.
+func validateClearTargetArgs(args UpdateCampaignArgs) error {
+	if args.ClearTargetCPA && args.ClearTargetROAS {
+		return fmt.Errorf("clear_target_cpa and clear_target_roas cannot be set together — a campaign holds one bidding strategy, so only one of the two targets exists")
+	}
+	clearTarget := clearTargetFor(args)
+	if clearTarget == nil {
+		return nil
+	}
+	if args.TargetCPA != 0 || args.TargetROAS != 0 {
+		return fmt.Errorf("%s cannot be combined with target_cpa/target_roas — pass %s alone to remove the campaign's target, or a target value alone to change it", clearTarget.flag, clearTarget.flag)
+	}
+	if args.PortfolioStrategyID != "" {
+		return fmt.Errorf("%s cannot be set with portfolio_strategy_id — a portfolio strategy's targets belong to the shared strategy; change them there so every attached campaign moves together", clearTarget.flag)
+	}
+	if args.BiddingStrategy != "" && canonicalBiddingStrategy(args.BiddingStrategy) != clearTarget.strategy {
+		return fmt.Errorf("%s applies only to %s, but bidding_strategy is %s, which has no optional target to remove", clearTarget.flag, clearTarget.strategy, args.BiddingStrategy)
+	}
+	return nil
+}
+
 type campaignBiddingStrategyState struct {
 	Type      string
 	Portfolio string
@@ -305,12 +357,17 @@ type UpdateCampaignArgs struct {
 	BiddingStrategy string `json:"bidding_strategy,omitempty" jsonschema:"new standard (campaign-level) bidding strategy, e.g. MAXIMIZE_CONVERSIONS; mutually exclusive with portfolio_strategy_id"`
 	// PortfolioStrategyID attaches the campaign to a shared bidding strategy so
 	// several campaigns pool their conversion volume into one learning set.
-	PortfolioStrategyID string   `json:"portfolio_strategy_id,omitempty" jsonschema:"ID (or resource name) of a portfolio bidding strategy to attach this campaign to; its targets live on the shared strategy, so do not pass target_cpa/target_roas with it"`
-	TargetCPA           float64  `json:"target_cpa,omitempty" jsonschema:"target CPA in currency units"`
-	TargetROAS          float64  `json:"target_roas,omitempty" jsonschema:"target ROAS ratio"`
-	DailyBudget         float64  `json:"daily_budget,omitempty" jsonschema:"new daily budget in currency units (capped by the budget guard)"`
-	GeoTargetIDs        []string `json:"geo_target_ids,omitempty" jsonschema:"geo target constant IDs to add"`
-	LanguageIDs         []string `json:"language_ids,omitempty" jsonschema:"language constant IDs to add"`
+	PortfolioStrategyID string  `json:"portfolio_strategy_id,omitempty" jsonschema:"ID (or resource name) of a portfolio bidding strategy to attach this campaign to; its targets live on the shared strategy, so do not pass target_cpa/target_roas with it"`
+	TargetCPA           float64 `json:"target_cpa,omitempty" jsonschema:"target CPA in currency units"`
+	TargetROAS          float64 `json:"target_roas,omitempty" jsonschema:"target ROAS ratio"`
+	// The clear flags remove an optional target so the campaign bids on the
+	// bare strategy. Omitting target_cpa/target_roas cannot express this: an
+	// omitted value means "leave it alone".
+	ClearTargetCPA  bool     `json:"clear_target_cpa,omitempty" jsonschema:"remove the campaign's target CPA, leaving pure MAXIMIZE_CONVERSIONS; only valid for a MAXIMIZE_CONVERSIONS campaign and cannot be combined with target_cpa"`
+	ClearTargetROAS bool     `json:"clear_target_roas,omitempty" jsonschema:"remove the campaign's target ROAS, leaving pure MAXIMIZE_CONVERSION_VALUE; only valid for a MAXIMIZE_CONVERSION_VALUE campaign and cannot be combined with target_roas"`
+	DailyBudget     float64  `json:"daily_budget,omitempty" jsonschema:"new daily budget in currency units (capped by the budget guard)"`
+	GeoTargetIDs    []string `json:"geo_target_ids,omitempty" jsonschema:"geo target constant IDs to add"`
+	LanguageIDs     []string `json:"language_ids,omitempty" jsonschema:"language constant IDs to add"`
 	// Location options — how targeted/excluded locations are matched. Each
 	// side is left untouched when omitted.
 	PositiveGeoTargetType string `json:"positive_geo_target_type,omitempty" jsonschema:"how targeted locations are matched: PRESENCE_OR_INTEREST or PRESENCE for people in the location only"`
@@ -345,6 +402,10 @@ func runUpdateCampaign(ctx context.Context, c *Client, args UpdateCampaignArgs) 
 			return WriteResult{}, err
 		}
 	}
+	if err := validateClearTargetArgs(args); err != nil {
+		return WriteResult{}, err
+	}
+	clearTarget := clearTargetFor(args)
 	// A portfolio strategy carries its own type and targets on the shared
 	// resource, so it cannot be combined with a campaign-level strategy or a
 	// campaign-level target.
@@ -396,13 +457,18 @@ func runUpdateCampaign(ctx context.Context, c *Client, args UpdateCampaignArgs) 
 	// already uses a compatible strategy; resolve that strategy so setting the
 	// target leaf preserves the current bidding oneof.
 	strategy := args.BiddingStrategy
-	if strategy == "" && (args.TargetCPA != 0 || args.TargetROAS != 0) {
+	if strategy == "" && (args.TargetCPA != 0 || args.TargetROAS != 0 || clearTarget != nil) {
 		strategy, err = resolveCampaignBiddingStrategy(ctx, c, cid, campaignID)
 		if err != nil {
 			return WriteResult{}, toolError(tool, err)
 		}
 	}
-	if strategy != "" && args.TargetCPA == 0 && args.TargetROAS == 0 && biddingStrategyAllowsEmptyUpdate(strategy) {
+	if clearTarget != nil && strategy != clearTarget.strategy {
+		return WriteResult{}, toolError(tool, fmt.Errorf("campaign %s bids with %s, which has no optional %s to remove — %s applies to %s; pass bidding_strategy %s to move the campaign onto it", args.CampaignID, strategy, clearTarget.label, clearTarget.flag, clearTarget.strategy, clearTarget.strategy))
+	}
+	// A clear wants exactly the empty-message update the redundancy check below
+	// suppresses, so it never takes that branch.
+	if clearTarget == nil && strategy != "" && args.TargetCPA == 0 && args.TargetROAS == 0 && biddingStrategyAllowsEmptyUpdate(strategy) {
 		current, err := fetchCampaignBiddingStrategyState(ctx, c, cid, campaignID)
 		if err != nil {
 			return WriteResult{}, toolError(tool, err)
@@ -421,7 +487,18 @@ func runUpdateCampaign(ctx context.Context, c *Client, args UpdateCampaignArgs) 
 	update := map[string]any{"resourceName": campaignResource}
 	var mask []string
 	var portfolio portfolioStrategyInfo
-	if strategy != "" {
+	switch {
+	case clearTarget != nil:
+		// A clear masks the target leaf and nothing else. Reusing the
+		// strategy-selection mask would also blank the leaves that merely
+		// travel with the strategy: MAXIMIZE_CONVERSION_VALUE's
+		// target_roas_tolerance_percent_millis is a separate campaign-level
+		// setting, and the operator asked only for the target. Masking one leaf
+		// still selects the strategy's oneof member, so the campaign keeps
+		// bidding with it.
+		update[clearTarget.field] = map[string]any{}
+		mask = append(mask, clearTarget.mask)
+	case strategy != "":
 		if err := applyBiddingStrategyUpdate(update, &mask, strategy, args.TargetCPA, args.TargetROAS); err != nil {
 			return WriteResult{}, err
 		}
@@ -467,6 +544,12 @@ func runUpdateCampaign(ctx context.Context, c *Client, args UpdateCampaignArgs) 
 		return WriteResult{}, fmt.Errorf("no changes specified for campaign update")
 	}
 	summary := fmt.Sprintf("Update campaign %s (%d operation(s))", args.CampaignID, len(ops))
+	if clearTarget != nil {
+		summary = fmt.Sprintf("Remove the %s from campaign %s, leaving it on %s with no target", clearTarget.label, args.CampaignID, clearTarget.strategy)
+		if len(ops) > 1 {
+			summary += fmt.Sprintf(" and %d other change(s)", len(ops)-1)
+		}
+	}
 	if portfolioID != "" {
 		summary = fmt.Sprintf("Attach campaign %s to portfolio bidding strategy %q (%s, ID %s)", args.CampaignID, portfolio.Name, portfolio.Type, portfolio.ID)
 		if len(ops) > 1 {
@@ -508,6 +591,8 @@ func init() {
 	f.StringVar(&updateCampaignArgs.PortfolioStrategyID, "portfolio-strategy-id", "", "attach the campaign to this portfolio bidding strategy (ID or resource name)")
 	f.Float64Var(&updateCampaignArgs.TargetCPA, "target-cpa", 0, "target CPA in currency units")
 	f.Float64Var(&updateCampaignArgs.TargetROAS, "target-roas", 0, "target ROAS ratio")
+	f.BoolVar(&updateCampaignArgs.ClearTargetCPA, "clear-target-cpa", false, "remove the campaign's target CPA, leaving pure MAXIMIZE_CONVERSIONS")
+	f.BoolVar(&updateCampaignArgs.ClearTargetROAS, "clear-target-roas", false, "remove the campaign's target ROAS, leaving pure MAXIMIZE_CONVERSION_VALUE")
 	f.Float64Var(&updateCampaignArgs.DailyBudget, "daily-budget", 0, "new daily budget in currency units")
 	f.StringArrayVar(&updateCampaignArgs.GeoTargetIDs, "geo-target-id", nil, "geo target constant ID to add (repeatable)")
 	f.StringArrayVar(&updateCampaignArgs.LanguageIDs, "language-id", nil, "language constant ID to add (repeatable)")
