@@ -150,7 +150,7 @@ func runCreateAppCampaign(ctx context.Context, c *Client, args CreateAppCampaign
 	}}})
 
 	for _, geoID := range args.GeoTargetIDs {
-		ops = append(ops, campaignLocationCriterion(campaignResource, geoID))
+		ops = append(ops, campaignLocationCriterion(campaignResource, geoID, false))
 	}
 	for _, languageID := range args.LanguageIDs {
 		ops = append(ops, campaignLanguageCriterion(campaignResource, languageID))

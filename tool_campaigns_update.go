@@ -366,8 +366,11 @@ type UpdateCampaignArgs struct {
 	ClearTargetCPA  bool     `json:"clear_target_cpa,omitempty" jsonschema:"remove the campaign's target CPA, leaving pure MAXIMIZE_CONVERSIONS; only valid for a MAXIMIZE_CONVERSIONS campaign and cannot be combined with target_cpa"`
 	ClearTargetROAS bool     `json:"clear_target_roas,omitempty" jsonschema:"remove the campaign's target ROAS, leaving pure MAXIMIZE_CONVERSION_VALUE; only valid for a MAXIMIZE_CONVERSION_VALUE campaign and cannot be combined with target_roas"`
 	DailyBudget     float64  `json:"daily_budget,omitempty" jsonschema:"new daily budget in currency units (capped by the budget guard)"`
-	GeoTargetIDs    []string `json:"geo_target_ids,omitempty" jsonschema:"geo target constant IDs to add"`
-	LanguageIDs     []string `json:"language_ids,omitempty" jsonschema:"language constant IDs to add"`
+	GeoTargetIDs    []string `json:"geo_target_ids,omitempty" jsonschema:"geo target constant IDs to add as targeted locations"`
+	// ExcludeGeoTargetIDs adds excluded locations — the same criterion with
+	// negative set. negative_geo_target_type configures how they match.
+	ExcludeGeoTargetIDs []string `json:"exclude_geo_target_ids,omitempty" jsonschema:"geo target constant IDs to add as EXCLUDED locations; how they match is set by negative_geo_target_type"`
+	LanguageIDs         []string `json:"language_ids,omitempty" jsonschema:"language constant IDs to add"`
 	// Location options — how targeted/excluded locations are matched. Each
 	// side is left untouched when omitted.
 	PositiveGeoTargetType string `json:"positive_geo_target_type,omitempty" jsonschema:"how targeted locations are matched: PRESENCE_OR_INTEREST or PRESENCE for people in the location only"`
@@ -527,14 +530,17 @@ func runUpdateCampaign(ctx context.Context, c *Client, args UpdateCampaignArgs) 
 	}
 
 	// Geo and language additions.
-	if err := numericIDs("geo_target_id", args.GeoTargetIDs); err != nil {
+	if err := validateGeoTargetSelection(args.GeoTargetIDs, args.ExcludeGeoTargetIDs); err != nil {
 		return WriteResult{}, err
 	}
 	if err := numericIDs("language_id", args.LanguageIDs); err != nil {
 		return WriteResult{}, err
 	}
 	for _, geoID := range args.GeoTargetIDs {
-		ops = append(ops, campaignLocationCriterion(campaignResource, geoID))
+		ops = append(ops, campaignLocationCriterion(campaignResource, geoID, false))
+	}
+	for _, geoID := range args.ExcludeGeoTargetIDs {
+		ops = append(ops, campaignLocationCriterion(campaignResource, geoID, true))
 	}
 	for _, langID := range args.LanguageIDs {
 		ops = append(ops, campaignLanguageCriterion(campaignResource, langID))
@@ -594,7 +600,8 @@ func init() {
 	f.BoolVar(&updateCampaignArgs.ClearTargetCPA, "clear-target-cpa", false, "remove the campaign's target CPA, leaving pure MAXIMIZE_CONVERSIONS")
 	f.BoolVar(&updateCampaignArgs.ClearTargetROAS, "clear-target-roas", false, "remove the campaign's target ROAS, leaving pure MAXIMIZE_CONVERSION_VALUE")
 	f.Float64Var(&updateCampaignArgs.DailyBudget, "daily-budget", 0, "new daily budget in currency units")
-	f.StringArrayVar(&updateCampaignArgs.GeoTargetIDs, "geo-target-id", nil, "geo target constant ID to add (repeatable)")
+	f.StringArrayVar(&updateCampaignArgs.GeoTargetIDs, "geo-target-id", nil, "geo target constant ID to target (repeatable)")
+	f.StringArrayVar(&updateCampaignArgs.ExcludeGeoTargetIDs, "exclude-geo-target-id", nil, "geo target constant ID to exclude (repeatable)")
 	f.StringArrayVar(&updateCampaignArgs.LanguageIDs, "language-id", nil, "language constant ID to add (repeatable)")
 	f.StringVar(&updateCampaignArgs.PositiveGeoTargetType, "positive-geo-target-type", "", "location option for targeted locations: PRESENCE_OR_INTEREST or PRESENCE")
 	f.StringVar(&updateCampaignArgs.NegativeGeoTargetType, "negative-geo-target-type", "", "location option for excluded locations: PRESENCE (recommended) or PRESENCE_OR_INTEREST")

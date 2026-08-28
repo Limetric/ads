@@ -135,8 +135,11 @@ type DraftCampaignArgs struct {
 	ChannelType     string                 `json:"channel_type" jsonschema:"advertising channel, e.g. SEARCH or DISPLAY"`
 	AdGroupName     string                 `json:"ad_group_name" jsonschema:"the name of the ad group to create"`
 	Keywords        []KeywordWithMatchType `json:"keywords,omitempty" jsonschema:"optional keywords to add to the ad group"`
-	GeoTargetIDs    []string               `json:"geo_target_ids,omitempty" jsonschema:"optional geo target constant IDs"`
-	LanguageIDs     []string               `json:"language_ids,omitempty" jsonschema:"optional language constant IDs"`
+	GeoTargetIDs    []string               `json:"geo_target_ids,omitempty" jsonschema:"optional geo target constant IDs to target"`
+	// ExcludeGeoTargetIDs adds excluded locations, which negative_geo_target_type
+	// configures the matching of.
+	ExcludeGeoTargetIDs []string `json:"exclude_geo_target_ids,omitempty" jsonschema:"optional geo target constant IDs to EXCLUDE; how they match is set by negative_geo_target_type"`
+	LanguageIDs         []string `json:"language_ids,omitempty" jsonschema:"optional language constant IDs"`
 	// Location options — how targeted/excluded locations are matched.
 	PositiveGeoTargetType string `json:"positive_geo_target_type,omitempty" jsonschema:"how targeted locations are matched: PRESENCE_OR_INTEREST (the Google default) or PRESENCE for people in the location only"`
 	NegativeGeoTargetType string `json:"negative_geo_target_type,omitempty" jsonschema:"how excluded locations are matched: PRESENCE (recommended) or PRESENCE_OR_INTEREST, which most campaign types no longer accept"`
@@ -241,15 +244,18 @@ func runDraftCampaign(ctx context.Context, c *Client, args DraftCampaignArgs) (W
 	}
 	ops = append(ops, map[string]any{"campaignOperation": map[string]any{"create": campaignCreate}})
 
-	// 3. Geo targets, 4. Language targets.
-	if err := numericIDs("geo_target_id", args.GeoTargetIDs); err != nil {
+	// 3. Geo targets and exclusions, 4. Language targets.
+	if err := validateGeoTargetSelection(args.GeoTargetIDs, args.ExcludeGeoTargetIDs); err != nil {
 		return WriteResult{}, err
 	}
 	if err := numericIDs("language_id", args.LanguageIDs); err != nil {
 		return WriteResult{}, err
 	}
 	for _, geoID := range args.GeoTargetIDs {
-		ops = append(ops, campaignLocationCriterion(campaignResource, geoID))
+		ops = append(ops, campaignLocationCriterion(campaignResource, geoID, false))
+	}
+	for _, geoID := range args.ExcludeGeoTargetIDs {
+		ops = append(ops, campaignLocationCriterion(campaignResource, geoID, true))
 	}
 	for _, langID := range args.LanguageIDs {
 		ops = append(ops, campaignLanguageCriterion(campaignResource, langID))
@@ -282,11 +288,42 @@ func runDraftCampaign(ctx context.Context, c *Client, args DraftCampaignArgs) (W
 }
 
 // campaignLocationCriterion builds a geo-target campaign criterion create op.
-func campaignLocationCriterion(campaignResource, geoID string) map[string]any {
-	return map[string]any{"campaignCriterionOperation": map[string]any{"create": map[string]any{
+// negative marks the location as *excluded* rather than targeted — the same
+// payload plus "negative": true, and the only thing that made
+// negative_geo_target_type (which configures how exclusions match) apply to
+// anything a campaign built here actually holds (issue #53).
+func campaignLocationCriterion(campaignResource, geoID string, negative bool) map[string]any {
+	criterion := map[string]any{
 		"campaign": campaignResource,
 		"location": map[string]any{"geoTargetConstant": fmt.Sprintf("geoTargetConstants/%s", geoID)},
-	}}}
+	}
+	if negative {
+		criterion["negative"] = true
+	}
+	return map[string]any{"campaignCriterionOperation": map[string]any{"create": criterion}}
+}
+
+// validateGeoTargetSelection checks both sides of a campaign's location
+// targeting and rejects an ID that appears on both. Google applies the
+// exclusion, so targeting and excluding the same place is never what was
+// meant — and it fails here rather than silently.
+func validateGeoTargetSelection(include, exclude []string) error {
+	if err := numericIDs("geo_target_id", include); err != nil {
+		return err
+	}
+	if err := numericIDs("exclude_geo_target_id", exclude); err != nil {
+		return err
+	}
+	targeted := make(map[string]bool, len(include))
+	for _, id := range include {
+		targeted[id] = true
+	}
+	for _, id := range exclude {
+		if targeted[id] {
+			return fmt.Errorf("geo target %s is both targeted and excluded — an exclusion wins, so listing it in geo_target_ids does nothing; drop it from one of the two", id)
+		}
+	}
+	return nil
 }
 
 // campaignLanguageCriterion builds a language campaign criterion create op.
@@ -340,7 +377,8 @@ func init() {
 	f.StringVar(&draftCampaignArgs.ChannelType, "channel-type", "SEARCH", "advertising channel, e.g. SEARCH or DISPLAY")
 	f.StringVar(&draftCampaignArgs.AdGroupName, "ad-group-name", "", "ad group name (required)")
 	f.StringArrayVar(&draftCampaignKwFlags, "keyword", nil, "keyword as text|MATCHTYPE (repeatable)")
-	f.StringArrayVar(&draftCampaignArgs.GeoTargetIDs, "geo-target-id", nil, "geo target constant ID (repeatable)")
+	f.StringArrayVar(&draftCampaignArgs.GeoTargetIDs, "geo-target-id", nil, "geo target constant ID to target (repeatable)")
+	f.StringArrayVar(&draftCampaignArgs.ExcludeGeoTargetIDs, "exclude-geo-target-id", nil, "geo target constant ID to exclude (repeatable)")
 	f.StringArrayVar(&draftCampaignArgs.LanguageIDs, "language-id", nil, "language constant ID (repeatable)")
 	f.StringVar(&draftCampaignArgs.PositiveGeoTargetType, "positive-geo-target-type", "", "location option for targeted locations: PRESENCE_OR_INTEREST or PRESENCE")
 	f.StringVar(&draftCampaignArgs.NegativeGeoTargetType, "negative-geo-target-type", "", "location option for excluded locations: PRESENCE (recommended) or PRESENCE_OR_INTEREST")

@@ -163,6 +163,30 @@ geo/language targeting, and the campaign's **location options** — Google's
 Performance Max create commands do not take them; set them afterwards with
 `campaign update`.
 
+### Targeting and excluding locations
+
+`--geo-target-id` targets a location; `--exclude-geo-target-id` excludes one.
+Both take geo target constant IDs, which `geo search` finds:
+
+```bash
+ads google geo search --query "United Kingdom"
+
+# Target the UK, but not Northern Ireland, and match exclusions on presence.
+ads google campaign update --campaign-id 111 \
+  --geo-target-id 2826 --exclude-geo-target-id 20339 \
+  --negative-geo-target-type PRESENCE
+```
+
+`--negative-geo-target-type` is what governs an exclusion: `PRESENCE` excludes
+people regularly in the location, `PRESENCE_OR_INTEREST` also excludes people
+merely interested in it (most campaign types no longer accept it). Without an
+exclusion to govern it, that setting configures an empty set.
+
+The same ID cannot be targeted and excluded at once — Google applies the
+exclusion, so it would silently do nothing — and that is rejected at preview.
+Both flags are **additive**: each call adds to what the campaign already
+carries.
+
 ### Clearing a bidding target
 
 `--target-cpa` / `--target-roas` are optional on `MAXIMIZE_CONVERSIONS` and
