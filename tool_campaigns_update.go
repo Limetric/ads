@@ -232,16 +232,17 @@ func (p portfolioStrategyInfo) resourceName() string {
 
 // parsePortfolioStrategyID accepts either a plain numeric strategy ID or the
 // full resource name create_portfolio_bidding_strategy hands back in
-// resource_names, so an agent can pass that value straight through.
-func parsePortfolioStrategyID(value string) (string, error) {
+// resource_names, so an agent can pass that value straight through. field names
+// the argument it came from, for the error message.
+func parsePortfolioStrategyID(field, value string) (string, error) {
 	id := strings.TrimSpace(value)
 	if strings.Contains(id, "/") {
 		if !strings.Contains(id, "/biddingStrategies/") {
-			return "", fmt.Errorf("portfolio_strategy_id %q is not a bidding strategy resource name — pass the numeric ID or customers/<customer_id>/biddingStrategies/<id>", value)
+			return "", fmt.Errorf("%s %q is not a bidding strategy resource name — pass the numeric ID or customers/<customer_id>/biddingStrategies/<id>", field, value)
 		}
 		id = id[strings.LastIndex(id, "/")+1:]
 	}
-	return numericID("portfolio_strategy_id", id)
+	return numericID(field, id)
 }
 
 // int64String renders a REST int64 field — serialized as a JSON string, though
@@ -417,7 +418,7 @@ func runUpdateCampaign(ctx context.Context, c *Client, args UpdateCampaignArgs) 
 		if args.TargetCPA != 0 || args.TargetROAS != 0 {
 			return WriteResult{}, fmt.Errorf("target_cpa/target_roas cannot be set with portfolio_strategy_id — a portfolio strategy's targets belong to the shared strategy; change them there so every attached campaign moves together")
 		}
-		portfolioID, err = parsePortfolioStrategyID(args.PortfolioStrategyID)
+		portfolioID, err = parsePortfolioStrategyID("portfolio_strategy_id", args.PortfolioStrategyID)
 		if err != nil {
 			return WriteResult{}, err
 		}

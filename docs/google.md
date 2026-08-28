@@ -151,8 +151,8 @@ currency and time zone), `campaigns`, `ads`, keyword performance / search terms
 
 **Writes** (all preview-then-confirm) — Search, App, and Performance Max
 campaign create/update, ad group create/update, responsive search ad drafting,
-keyword add/remove (plus negatives), portfolio bidding strategies and keyword
-bids, sitelink/callout/structured-snippet extensions, custom audiences and
+keyword add/remove (plus negatives), portfolio bidding strategy create/update
+and keyword bids, sitelink/callout/structured-snippet extensions, custom audiences and
 audience targeting, image/YouTube/text asset upload, ad scheduling,
 pause/enable/remove, and recommendation apply/dismiss.
 
@@ -201,14 +201,40 @@ ads google campaign update --campaign-id 111 --portfolio-strategy-id 9876543210 
 
 The targets live on the shared strategy, so `--target-cpa` / `--target-roas`
 are rejected alongside `--portfolio-strategy-id`; change the target on the
-strategy itself and every attached campaign moves together. Setting
-`--bidding-strategy` again moves the campaign back to a standard strategy.
-Strategies shared down from a manager account are attachable too. To list what
-is available:
+strategy itself with `bidding update-strategy` and every attached campaign
+moves together. Setting `--bidding-strategy` again moves the campaign back to a
+standard strategy. Strategies shared down from a manager account are attachable
+too. To list what is available:
 
 ```bash
 ads google search --query "SELECT accessible_bidding_strategy.id, accessible_bidding_strategy.name, accessible_bidding_strategy.type FROM accessible_bidding_strategy"
 ```
+
+#### Changing a shared strategy
+
+```bash
+# Move every attached campaign to a new target CPA.
+ads google bidding update-strategy --strategy-id 9876543210 --target-cpa 42
+ads google bidding update-strategy --strategy-id 9876543210 --target-cpa 42 --confirm <token>
+ads google bidding update-strategy --strategy-id 9876543210 --target-cpa 42 --confirm <second-token>
+
+# Rename it.
+ads google bidding update-strategy --strategy-id 9876543210 --name "Pooled tCPA — EU"
+```
+
+The strategy's type decides which target it takes: `--target-cpa` for
+`TARGET_CPA` and `MAXIMIZE_CONVERSIONS`, `--target-roas` for `TARGET_ROAS` and
+`MAXIMIZE_CONVERSION_VALUE`, and
+`--impression-share-location` / `--impression-share-percent` for
+`TARGET_IMPRESSION_SHARE` (which `bidding create-strategy` starts at
+`ANYWHERE_ON_PAGE` / 50%). A type is fixed once the strategy exists, so passing
+the wrong target fails at preview and names the one that applies.
+
+**A target change takes two confirmations.** It moves every campaign attached
+to the strategy at once — which is the point of a portfolio, and the reason it
+is worth seeing twice. A rename takes one. Only the account that *owns* a
+strategy can change it: a strategy shared down from a manager is rejected with
+the manager's customer ID to re-run against.
 
 New campaigns, ad groups, and ads ship **PAUSED** by default.
 

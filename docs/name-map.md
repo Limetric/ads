@@ -23,10 +23,11 @@ actually landed.
    rename, and keeping aliases would re-take the exact names the next platform
    wants.
 
-> #36 says 52 MCP tools; the tree actually registers **49**. The count in the
-> issue is stale, not a missing group.
+> #36 says 52 MCP tools; the tree actually registers **50** — 49 at the time of
+> the rename, plus what has landed since (marked `—` in the Old column). The
+> count in the issue is stale, not a missing group.
 
-## MCP tools (49)
+## MCP tools (50)
 
 Uniform: every tool gains a `google_` prefix, nothing else changes. Descriptions,
 `Args` structs, and handlers are untouched.
@@ -64,6 +65,7 @@ Uniform: every tool gains a `google_` prefix, nothing else changes. Descriptions
 | `remove_entity` | `google_remove_entity` |
 | `set_campaign_schedule` | `google_set_campaign_schedule` |
 | `create_portfolio_bidding_strategy` | `google_create_portfolio_bidding_strategy` |
+| — | `google_update_portfolio_bidding_strategy` |
 | `update_keyword_bid` | `google_update_keyword_bid` |
 | `create_custom_audience` | `google_create_custom_audience` |
 | `add_audience_targeting` | `google_add_audience_targeting` |
@@ -107,6 +109,7 @@ commands in total. The subcommand trees below each are untouched.
 | `goads audience create` | `ads google audience create` |
 | `goads audience target` | `ads google audience target` |
 | `goads bidding create-strategy` | `ads google bidding create-strategy` |
+| — | `ads google bidding update-strategy` |
 | `goads bidding set-keyword-bid` | `ads google bidding set-keyword-bid` |
 | `goads budget set` | `ads google budget set` |
 | `goads budget delete` | `ads google budget delete` |
