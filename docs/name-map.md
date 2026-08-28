@@ -23,11 +23,11 @@ actually landed.
    rename, and keeping aliases would re-take the exact names the next platform
    wants.
 
-> #36 says 52 MCP tools; the tree actually registers **51** — 49 at the time of
+> #36 says 52 MCP tools; the tree actually registers **53** — 49 at the time of
 > the rename, plus what has landed since (marked `—` in the Old column). The
 > count in the issue is stale, not a missing group.
 
-## MCP tools (51)
+## MCP tools (53)
 
 Uniform: every tool gains a `google_` prefix, nothing else changes. Descriptions,
 `Args` structs, and handlers are untouched.
@@ -73,6 +73,8 @@ Uniform: every tool gains a `google_` prefix, nothing else changes. Descriptions
 | `create_ad_group` | `google_create_ad_group` |
 | `update_ad_group` | `google_update_ad_group` |
 | `draft_responsive_search_ad` | `google_draft_responsive_search_ad` |
+| — | `google_draft_dynamic_search_ad` |
+| — | `google_add_webpage_targets` |
 | `draft_keywords` | `google_draft_keywords` |
 | `add_negative_keywords` | `google_add_negative_keywords` |
 | `remove_keywords` | `google_remove_keywords` |
@@ -100,6 +102,7 @@ commands in total. The subcommand trees below each are untouched.
 | `goads accounts info` | `ads google accounts info` |
 | `goads ad draft-rsa` | `ads google ad draft-rsa` |
 | `goads ad draft-app` | `ads google ad draft-app` |
+| — | `ads google ad draft-dsa` |
 | `goads adgroup create` | `ads google adgroup create` |
 | `goads adgroup update` | `ads google adgroup update` |
 | `goads ads` | `ads google ads` |
@@ -147,6 +150,7 @@ commands in total. The subcommand trees below each are untouched.
 | `goads report` | `ads google report` |
 | `goads schedule` | `ads google schedule` |
 | `goads search` | `ads google search` |
+| — | `ads google webpage-targets add` |
 
 ## CLI: shared infrastructure
 

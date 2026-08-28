@@ -465,7 +465,13 @@ type UpdateCampaignArgs struct {
 	// side is left untouched when omitted.
 	PositiveGeoTargetType string `json:"positive_geo_target_type,omitempty" jsonschema:"how targeted locations are matched: PRESENCE_OR_INTEREST or PRESENCE for people in the location only"`
 	NegativeGeoTargetType string `json:"negative_geo_target_type,omitempty" jsonschema:"how excluded locations are matched: PRESENCE (recommended) or PRESENCE_OR_INTEREST, which most campaign types no longer accept"`
-	Confirm               string `json:"confirm,omitempty" jsonschema:"a confirm token from a previous preview; omit to preview"`
+	// Dynamic Search Ads. Google requires the domain and the language
+	// together, so the setting is written as one whole: passing them also
+	// writes use_supplied_urls_only, which is false unless asked for.
+	DSADomain              string `json:"dsa_domain,omitempty" jsonschema:"set the campaign's Dynamic Search Ads domain, e.g. example.com; requires dsa_language_code and rewrites the whole setting"`
+	DSALanguageCode        string `json:"dsa_language_code,omitempty" jsonschema:"the language of the DSA domain, e.g. en; required with dsa_domain"`
+	DSAUseSuppliedURLsOnly bool   `json:"dsa_use_supplied_urls_only,omitempty" jsonschema:"serve only URLs supplied by page feeds rather than Google's crawl of the domain; written whenever dsa_domain is set, so pass it every time it should stay on"`
+	Confirm                string `json:"confirm,omitempty" jsonschema:"a confirm token from a previous preview; omit to preview"`
 }
 
 func runUpdateCampaign(ctx context.Context, c *Client, args UpdateCampaignArgs) (WriteResult, error) {
@@ -517,6 +523,15 @@ func runUpdateCampaign(ctx context.Context, c *Client, args UpdateCampaignArgs) 
 	}
 	// Validated before any lookup so a typo costs no API round trip.
 	geoSetting, geoMask, err := geoTargetTypeSetting(args.PositiveGeoTargetType, args.NegativeGeoTargetType)
+	if err != nil {
+		return WriteResult{}, err
+	}
+	// A campaign that was created without a dynamic search ads setting can be
+	// given one here — the only way back for a Search campaign that should
+	// have been a DSA campaign (issue #60). The ad groups still have to be
+	// dynamic, and their type is fixed at creation, so an existing standard ad
+	// group cannot be converted along with the campaign.
+	dsaSetting, dsaMask, err := dynamicSearchAdsSetting(args.DSADomain, args.DSALanguageCode, args.DSAUseSuppliedURLsOnly)
 	if err != nil {
 		return WriteResult{}, err
 	}
@@ -615,9 +630,16 @@ func runUpdateCampaign(ctx context.Context, c *Client, args UpdateCampaignArgs) 
 		update["geoTargetTypeSetting"] = geoSetting
 		mask = append(mask, geoMask...)
 	}
-	scheduleChanges, err := applyCampaignScheduleUpdate(args, update, &mask)
+	if dsaSetting != nil {
+		update["dynamicSearchAdsSetting"] = dsaSetting
+		mask = append(mask, dsaMask...)
+	}
+	changes, err := applyCampaignScheduleUpdate(args, update, &mask)
 	if err != nil {
 		return WriteResult{}, err
+	}
+	if dsa := dsaCampaignSummary(dsaSetting); dsa != "" {
+		changes = append(changes, dsa)
 	}
 	if len(mask) > 0 {
 		ops = append(ops, map[string]any{"campaignOperation": map[string]any{"update": update, "updateMask": strings.Join(mask, ",")}})
@@ -644,25 +666,41 @@ func runUpdateCampaign(ctx context.Context, c *Client, args UpdateCampaignArgs) 
 		return WriteResult{}, fmt.Errorf("no changes specified for campaign update")
 	}
 	summary := fmt.Sprintf("Update campaign %s (%d operation(s))", args.CampaignID, len(ops))
-	if len(scheduleChanges) > 0 {
-		summary = fmt.Sprintf("Update campaign %s: %s (%d operation(s))", args.CampaignID, strings.Join(scheduleChanges, ", "), len(ops))
+	if len(changes) > 0 {
+		summary = fmt.Sprintf("Update campaign %s: %s (%d operation(s))", args.CampaignID, strings.Join(changes, ", "), len(ops))
 	}
 	if clearTarget != nil {
 		summary = fmt.Sprintf("Remove the %s from campaign %s, leaving it on %s with no target", clearTarget.label, args.CampaignID, clearTarget.strategy)
-		if len(ops) > 1 {
-			summary += fmt.Sprintf(" and %d other change(s)", len(ops)-1)
-		}
+		summary += otherChangesSuffix(changes, len(ops))
 	}
 	if portfolioID != "" {
 		summary = fmt.Sprintf("Attach campaign %s to portfolio bidding strategy %q (%s, ID %s)", args.CampaignID, portfolio.Name, portfolio.Type, portfolio.ID)
-		if len(ops) > 1 {
-			summary += fmt.Sprintf(" and %d other change(s)", len(ops)-1)
-		}
+		summary += otherChangesSuffix(changes, len(ops))
 	}
 	if doubleConfirm {
 		return previewMutateDouble(tool, cid, summary, ops)
 	}
 	return previewMutate(tool, cid, summary, ops)
+}
+
+// otherChangesSuffix names what else a summary that leads with one headline
+// change is carrying. The operation count alone cannot say: bidding, location
+// options, run dates, and the dynamic search ads setting all write into the
+// same campaign operation, so a change travelling with a target clear or a
+// portfolio attachment would be staged without ever appearing in the preview
+// it is confirmed from.
+func otherChangesSuffix(changes []string, ops int) string {
+	var parts []string
+	if len(changes) > 0 {
+		parts = append(parts, strings.Join(changes, ", "))
+	}
+	if ops > 1 {
+		parts = append(parts, fmt.Sprintf("%d other change(s)", ops-1))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " and " + strings.Join(parts, ", ")
 }
 
 // --- CLI front-end ---
@@ -706,6 +744,9 @@ func init() {
 	f.StringArrayVar(&updateCampaignArgs.LanguageIDs, "language-id", nil, "language constant ID to add (repeatable)")
 	f.StringVar(&updateCampaignArgs.PositiveGeoTargetType, "positive-geo-target-type", "", "location option for targeted locations: PRESENCE_OR_INTEREST or PRESENCE")
 	f.StringVar(&updateCampaignArgs.NegativeGeoTargetType, "negative-geo-target-type", "", "location option for excluded locations: PRESENCE (recommended) or PRESENCE_OR_INTEREST")
+	f.StringVar(&updateCampaignArgs.DSADomain, "dsa-domain", "", "set the campaign's Dynamic Search Ads domain, e.g. example.com (needs --dsa-language-code; rewrites the whole setting)")
+	f.StringVar(&updateCampaignArgs.DSALanguageCode, "dsa-language-code", "", "language of the DSA domain, e.g. en (needs --dsa-domain)")
+	f.BoolVar(&updateCampaignArgs.DSAUseSuppliedURLsOnly, "dsa-use-supplied-urls-only", false, "serve only page-feed URLs; written whenever --dsa-domain is set, so pass it every time it should stay on")
 	f.StringVar(&updateCampaignArgs.Confirm, "confirm", "", "confirm token from a previous preview")
 	_ = campaignUpdateCmd.MarkFlagRequired("campaign-id")
 

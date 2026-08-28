@@ -165,7 +165,7 @@ func addGoogleTools(reg *toolRegistrar, client *Client) {
 		runAddAudienceTargeting)
 
 	addTool(reg, client, "create_ad_group",
-		"Create an ad group in a campaign (defaults to PAUSED). Returns a preview + confirm token; pass Confirm to apply.",
+		"Create an ad group in a campaign (defaults to PAUSED). Type selects SEARCH_STANDARD (the default), SEARCH_DYNAMIC_ADS for a Dynamic Search Ads ad group, or DISPLAY_STANDARD, and is immutable once created; OmitType leaves it to Google, which App campaigns require. Returns a preview + confirm token; pass Confirm to apply.",
 		runCreateAdGroup)
 
 	addTool(reg, client, "update_ad_group",
@@ -175,6 +175,14 @@ func addGoogleTools(reg *toolRegistrar, client *Client) {
 	addTool(reg, client, "draft_responsive_search_ad",
 		"Draft a Responsive Search Ad (3-15 headlines, 2-4 descriptions; defaults to PAUSED). Returns a preview + confirm token; pass Confirm to apply.",
 		runDraftResponsiveSearchAd)
+
+	addTool(reg, client, "draft_dynamic_search_ad",
+		"Draft an expanded Dynamic Search Ad in a SEARCH_DYNAMIC_ADS ad group (defaults to PAUSED). A DSA carries only Description and the optional Description2 — Google generates the headline from the search query and the final URL from the page its dynamic ad targets matched, so there are no headlines and no final URL to supply. Returns a preview + confirm token; pass Confirm to apply.",
+		runDraftDynamicSearchAd)
+
+	addTool(reg, client, "add_webpage_targets",
+		"Add dynamic ad targets (webpage criteria) to a SEARCH_DYNAMIC_ADS ad group — the part of the site its dynamic search ads advertise, and what a dynamic ad group matches against instead of keywords. Each target needs a CriterionName plus either 1-3 Conditions (operand URL, CATEGORY, PAGE_TITLE, PAGE_CONTENT, or CUSTOM_LABEL with an argument; AND-ed together) or AllWebpages to target the whole domain. Returns a preview + confirm token; pass Confirm to apply.",
+		runAddWebpageTargets)
 
 	addTool(reg, client, "draft_keywords",
 		"Add keywords (with match types) to an ad group. Returns a preview + confirm token; pass Confirm to apply.",
@@ -217,10 +225,10 @@ func addGoogleTools(reg *toolRegistrar, client *Client) {
 		runCreateAppCampaign)
 
 	addTool(reg, client, "draft_campaign",
-		"Draft a new campaign with budget, ad group, and optional keywords (defaults to PAUSED). GeoTargetIDs targets locations and ExcludeGeoTargetIDs excludes them. Returns a preview + confirm token; pass Confirm to apply.",
+		"Draft a new campaign with budget, ad group, and optional keywords (defaults to PAUSED). GeoTargetIDs targets locations and ExcludeGeoTargetIDs excludes them. DSADomain + DSALanguageCode make it a Dynamic Search Ads campaign, whose ad group is created as SEARCH_DYNAMIC_ADS and takes dynamic ad targets from google_add_webpage_targets rather than keywords. Returns a preview + confirm token; pass Confirm to apply.",
 		runDraftCampaign)
 
 	addTool(reg, client, "update_campaign",
-		"Update a campaign's budget, bidding strategy, geo/language targeting (GeoTargetIDs to target locations, ExcludeGeoTargetIDs to exclude them), and/or location options (positive/negative geo target type). Set BiddingStrategy for a standard campaign-level strategy, or PortfolioStrategyID to attach the campaign to a shared strategy from create_portfolio_bidding_strategy so several campaigns pool their conversion volume. Set ClearTargetCPA (or ClearTargetROAS) to strip an optional target off a MAXIMIZE_CONVERSIONS (or MAXIMIZE_CONVERSION_VALUE) campaign — omitting TargetCPA/TargetROAS leaves the existing target in place. Name renames the campaign, and StartDate/EndDate (YYYY-MM-DD, or YYYY-MM-DD HH:MM:SS where the campaign type supports minute granularity) set campaign.start_date_time/end_date_time; ClearEndDate lets it run indefinitely. Returns a preview + confirm token; pass Confirm to apply.",
+		"Update a campaign's budget, bidding strategy, geo/language targeting (GeoTargetIDs to target locations, ExcludeGeoTargetIDs to exclude them), and/or location options (positive/negative geo target type). Set BiddingStrategy for a standard campaign-level strategy, or PortfolioStrategyID to attach the campaign to a shared strategy from create_portfolio_bidding_strategy so several campaigns pool their conversion volume. Set ClearTargetCPA (or ClearTargetROAS) to strip an optional target off a MAXIMIZE_CONVERSIONS (or MAXIMIZE_CONVERSION_VALUE) campaign — omitting TargetCPA/TargetROAS leaves the existing target in place. Name renames the campaign, and StartDate/EndDate (YYYY-MM-DD, or YYYY-MM-DD HH:MM:SS where the campaign type supports minute granularity) set campaign.start_date_time/end_date_time; ClearEndDate lets it run indefinitely. DSADomain + DSALanguageCode add (or change) the campaign's Dynamic Search Ads setting, rewriting it as a whole — its ad groups still have to be created as SEARCH_DYNAMIC_ADS, since ad group type is immutable. Returns a preview + confirm token; pass Confirm to apply.",
 		runUpdateCampaign)
 }

@@ -32,7 +32,7 @@ platform it left out and why.
 
 | Platform | Setup guide | Surface |
 | --- | --- | --- |
-| Google Ads | [`docs/google.md`](docs/google.md) | 49 tools — GAQL search, reporting, and campaign management |
+| Google Ads | [`docs/google.md`](docs/google.md) | 53 tools — GAQL search, reporting, and campaign management |
 | Microsoft Advertising (Bing Ads) | [`docs/bing.md`](docs/bing.md) | 10 tools — entity reads, async reporting, budgets |
 
 Each guide covers that platform's prerequisites, sign-in, environment

@@ -141,7 +141,7 @@ currency. `ads google accounts info` reports which currency that is.
 
 ## Tool coverage
 
-49 tools, each available as an `ads google …` subcommand and a `google_…` MCP
+53 tools, each available as an `ads google …` subcommand and a `google_…` MCP
 tool. See [`name-map.md`](name-map.md) for the full CLI ↔ MCP map.
 
 **Reads** — `search` (raw GAQL), `report`, `accounts` (+ `accounts info` for
@@ -151,8 +151,9 @@ currency and time zone), `campaigns`, `ads`, keyword performance / search terms
 recommendation listing.
 
 **Writes** (all preview-then-confirm) — Search, App, and Performance Max
-campaign create/update, ad group create/update, responsive search ad drafting,
-keyword add/remove (plus negatives), portfolio bidding strategy create/update
+campaign create/update, ad group create/update, responsive search ad and
+dynamic search ad drafting, keyword add/remove (plus negatives), dynamic ad
+targets, portfolio bidding strategy create/update
 and keyword bids, sitelink/callout/structured-snippet extensions, custom audiences and
 audience targeting, image/YouTube/text asset upload, ad scheduling,
 pause/enable/remove (campaign criteria included), and recommendation
@@ -212,6 +213,75 @@ zone.
 Google rejects a `--start-date` change once a campaign has started.
 `--clear-end-date` clears the field, which is how Google says to set a running
 campaign back to indefinite; it cannot be combined with `--end-date`.
+
+### Dynamic Search Ads
+
+A DSA campaign has Google crawl your site and generate the headline and landing
+page for each query, so the four pieces below only work together — a dynamic ad
+group with no targets never serves, and an ad group's type is fixed at creation.
+`campaign create` builds the campaign and its dynamic ad group in one batch:
+
+```bash
+ads google campaign create --name "DSA — Catalogue" --daily-budget 25 \
+  --ad-group-name "Dynamic" \
+  --dsa-domain example.com --dsa-language-code en
+```
+
+`--dsa-domain` wants the bare domain (`example.com`, `www.example.com`), not a
+URL, and Google requires the language alongside it. The ad group is created as
+`SEARCH_DYNAMIC_ADS`, which is why `--keyword` is refused here: a dynamic ad
+group matches pages through *dynamic ad targets*, not keywords. Add
+`--dsa-use-supplied-urls-only` to serve only page-feed URLs instead of Google's
+crawl.
+
+Then draft the ad and the targets against the new ad group. A dynamic search ad
+carries only descriptions — there is no headline and no final URL to give,
+because Google writes both:
+
+```bash
+ads google ad draft-dsa --ad-group-id 222 \
+  --description "Free delivery on every order." \
+  --description2 "Browse the full catalogue."
+
+ads google webpage-targets add --ad-group-id 222 \
+  --criterion-name "Special offers" --condition URL=/specialoffers
+```
+
+Conditions are `OPERAND=ARGUMENT` — `URL`, `CATEGORY`, `PAGE_TITLE`,
+`PAGE_CONTENT`, or `CUSTOM_LABEL` — and repeating `--condition` narrows the
+target, since Google AND-s them. A target takes at most three, and a fourth
+cannot be moved to a second target to get around it: targets match
+independently, so a second one *widens* what is targeted rather than narrowing
+it. Express the conjunction in three conditions or fewer. `CATEGORY` arguments come from the
+`domain_category` resource, which `ads google search` can read once Google has
+crawled the site. `--cpc-bid-micros` gives one target its own bid.
+
+Targeting the whole site is a separate flag rather than an empty condition
+list, so it can never happen by forgetting one:
+
+```bash
+ads google webpage-targets add --ad-group-id 222 \
+  --criterion-name "All pages" --all-webpages
+```
+
+To add a dynamic ad group to a campaign that already exists, pass the type
+explicitly — it cannot be changed afterwards:
+
+```bash
+ads google adgroup create --campaign-id 111 --name "Dynamic" --type SEARCH_DYNAMIC_ADS
+```
+
+And a Search campaign that should have been a DSA campaign can be given the
+setting after the fact:
+
+```bash
+ads google campaign update --campaign-id 111 --dsa-domain example.com --dsa-language-code en
+```
+
+`campaign update` writes the setting as a whole, because Google requires the
+domain and the language on every write of it — so pass
+`--dsa-use-supplied-urls-only` each time it should stay on. Its existing ad
+groups stay standard; dynamic ones have to be created.
 
 ### Ad group bids and targets
 
