@@ -190,6 +190,23 @@ Both flags are **additive**: each call adds to what the campaign already
 carries. To take a location back off, see
 [campaign criteria](#campaign-criteria-geo-language-ad-schedule) below.
 
+### Renaming a campaign and setting its run dates
+
+```bash
+ads google campaign update --campaign-id 111 --name "Brand — EU"
+
+# Wind the campaign down on a schedule instead of being present to pause it.
+ads google campaign update --campaign-id 111 --end-date 2026-12-31
+
+# Let it run indefinitely again.
+ads google campaign update --campaign-id 111 --clear-end-date
+```
+
+Dates are `YYYY-MM-DD`. Google rejects a `--start-date` change once a campaign
+has started. `--clear-end-date` writes Google's own "runs indefinitely" value
+(`2037-12-30`), which is what `end_date` holds on a campaign that was never
+given one; it cannot be combined with `--end-date`.
+
 ### Clearing a bidding target
 
 `--target-cpa` / `--target-roas` are optional on `MAXIMIZE_CONVERSIONS` and

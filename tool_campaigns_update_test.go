@@ -1255,3 +1255,112 @@ func TestUpdateCampaign_RejectsATargetedAndExcludedLocation(t *testing.T) {
 		t.Fatal("targeting and excluding the same place must be rejected")
 	}
 }
+
+func TestUpdateCampaign_RenamesAndSetsRunDates(t *testing.T) {
+	useTempState(t)
+	srv, cap := mutateServer(t)
+	defer srv.Close()
+	c := newTestClient(t, srv)
+
+	args := UpdateCampaignArgs{
+		CustomerID: "1", CampaignID: "5",
+		Name: "Brand — EU", StartDate: "2026-09-01", EndDate: "2026-12-31",
+	}
+	prev, err := runUpdateCampaign(t.Context(), c, args)
+	if err != nil {
+		t.Fatalf("preview: %v", err)
+	}
+	// The preview names what changes; "1 operation(s)" says nothing about a
+	// rename or a finish line.
+	if !strings.Contains(prev.Preview, "Brand — EU") || !strings.Contains(prev.Preview, "end 2026-12-31") {
+		t.Errorf("preview does not describe the change: %s", prev.Preview)
+	}
+	args.Confirm = prev.Token
+	if _, err := runUpdateCampaign(t.Context(), c, args); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	op, _ := cap.firstOp(t)["campaignOperation"].(map[string]any)
+	upd := opUpdate(t, cap.firstOp(t), "campaignOperation")
+	if upd["name"] != "Brand — EU" || upd["startDate"] != "2026-09-01" || upd["endDate"] != "2026-12-31" {
+		t.Errorf("staged %v", upd)
+	}
+	if op["updateMask"] != "name,startDate,endDate" {
+		t.Errorf("updateMask = %v", op["updateMask"])
+	}
+}
+
+func TestUpdateCampaign_ClearEndDateWritesTheIndefiniteSentinel(t *testing.T) {
+	useTempState(t)
+	srv, cap := mutateServer(t)
+	defer srv.Close()
+	c := newTestClient(t, srv)
+
+	args := UpdateCampaignArgs{CustomerID: "1", CampaignID: "5", ClearEndDate: true}
+	prev, err := runUpdateCampaign(t.Context(), c, args)
+	if err != nil {
+		t.Fatalf("preview: %v", err)
+	}
+	args.Confirm = prev.Token
+	if _, err := runUpdateCampaign(t.Context(), c, args); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	upd := opUpdate(t, cap.firstOp(t), "campaignOperation")
+	// Google's own "runs indefinitely" value — what end_date holds on a
+	// campaign that was never given one.
+	if upd["endDate"] != campaignNoEndDate {
+		t.Errorf("endDate = %v, want %s", upd["endDate"], campaignNoEndDate)
+	}
+}
+
+func TestUpdateCampaign_RenameMasksOnlyTheName(t *testing.T) {
+	useTempState(t)
+	srv, cap := mutateServer(t)
+	defer srv.Close()
+	c := newTestClient(t, srv)
+
+	// Masking an omitted leaf clears it, so a rename must not touch the dates.
+	args := UpdateCampaignArgs{CustomerID: "1", CampaignID: "5", Name: "Renamed"}
+	prev, err := runUpdateCampaign(t.Context(), c, args)
+	if err != nil {
+		t.Fatalf("preview: %v", err)
+	}
+	args.Confirm = prev.Token
+	if _, err := runUpdateCampaign(t.Context(), c, args); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	op, _ := cap.firstOp(t)["campaignOperation"].(map[string]any)
+	if op["updateMask"] != "name" {
+		t.Errorf("updateMask = %v, want name alone", op["updateMask"])
+	}
+}
+
+func TestUpdateCampaign_RejectsBadDatesBeforeLookup(t *testing.T) {
+	useTempState(t)
+	cases := map[string]UpdateCampaignArgs{
+		"not a date":       {CustomerID: "1", CampaignID: "5", EndDate: "next Tuesday"},
+		"impossible date":  {CustomerID: "1", CampaignID: "5", EndDate: "2026-13-45"},
+		"unpadded date":    {CustomerID: "1", CampaignID: "5", StartDate: "2026-1-5"},
+		"end before start": {CustomerID: "1", CampaignID: "5", StartDate: "2026-09-01", EndDate: "2026-08-31"},
+		"clear and set":    {CustomerID: "1", CampaignID: "5", EndDate: "2026-12-31", ClearEndDate: true},
+	}
+	for name, args := range cases {
+		t.Run(name, func(t *testing.T) {
+			// A nil client would panic on any request, so reaching the API at
+			// all fails the test.
+			if _, err := runUpdateCampaign(t.Context(), nil, args); err == nil {
+				t.Error("expected the arguments to be rejected")
+			}
+		})
+	}
+}
+
+func TestParseCampaignDate(t *testing.T) {
+	if got, err := parseCampaignDate("end_date", " 2026-12-31 "); err != nil || got != "2026-12-31" {
+		t.Errorf("parseCampaignDate trimmed value = %q err=%v", got, err)
+	}
+	for _, bad := range []string{"", "20261231", "2026-12-32", "2026-1-1", "31/12/2026"} {
+		if _, err := parseCampaignDate("end_date", bad); err == nil {
+			t.Errorf("parseCampaignDate(%q) should fail", bad)
+		}
+	}
+}
