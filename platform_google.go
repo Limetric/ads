@@ -52,6 +52,7 @@ var googlePlatform = registerPlatform(&Platform{
 		extensionCmd,
 		pmaxCmd,
 		campaignCmd,
+		webpageTargetsCmd,
 	},
 
 	Login:          googleLoginCmd,

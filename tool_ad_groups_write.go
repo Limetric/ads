@@ -17,9 +17,13 @@ type CreateAdGroupArgs struct {
 	CampaignID   string `json:"campaign_id" jsonschema:"the campaign ID the ad group belongs to"`
 	Name         string `json:"name" jsonschema:"the ad group name"`
 	CpcBidMicros int64  `json:"cpc_bid_micros,omitempty" jsonschema:"optional default CPC bid in micros"`
-	OmitType     bool   `json:"omit_type,omitempty" jsonschema:"omit the ad group type; required for App campaigns"`
-	Status       string `json:"status,omitempty" jsonschema:"ENABLED or PAUSED; defaults to PAUSED"`
-	Confirm      string `json:"confirm,omitempty" jsonschema:"a confirm token from a previous preview; omit to preview"`
+	// Type is fixed at creation and cannot be changed afterwards, so a
+	// Dynamic Search Ads ad group has to be asked for here or not at all
+	// (issue #60).
+	Type     string `json:"type,omitempty" jsonschema:"ad group type: SEARCH_STANDARD (the default), SEARCH_DYNAMIC_ADS for a Dynamic Search Ads ad group, or DISPLAY_STANDARD; immutable once created"`
+	OmitType bool   `json:"omit_type,omitempty" jsonschema:"omit the ad group type; required for App campaigns"`
+	Status   string `json:"status,omitempty" jsonschema:"ENABLED or PAUSED; defaults to PAUSED"`
+	Confirm  string `json:"confirm,omitempty" jsonschema:"a confirm token from a previous preview; omit to preview"`
 }
 
 func runCreateAdGroup(ctx context.Context, c *Client, args CreateAdGroupArgs) (WriteResult, error) {
@@ -29,6 +33,17 @@ func runCreateAdGroup(ctx context.Context, c *Client, args CreateAdGroupArgs) (W
 	}
 	if args.Name == "" {
 		return WriteResult{}, fmt.Errorf("name must not be empty")
+	}
+	adGroupType := adGroupTypeSearchStandard
+	if args.Type != "" {
+		if args.OmitType {
+			return WriteResult{}, fmt.Errorf("type and omit_type cannot be set together — pass omit_type alone for an App campaign ad group, whose type Google assigns, or type alone to choose one")
+		}
+		parsed, err := parseAdGroupType(args.Type)
+		if err != nil {
+			return WriteResult{}, err
+		}
+		adGroupType = parsed
 	}
 	status, err := parseCreateStatus(args.Status)
 	if err != nil {
@@ -50,13 +65,16 @@ func runCreateAdGroup(ctx context.Context, c *Client, args CreateAdGroupArgs) (W
 		"status":   string(status),
 	}
 	if !args.OmitType {
-		create["type"] = "SEARCH_STANDARD"
+		create["type"] = adGroupType
 	}
 	if args.CpcBidMicros != 0 {
 		create["cpcBidMicros"] = microsString(args.CpcBidMicros)
 	}
 	op := map[string]any{"adGroupOperation": map[string]any{"create": create}}
 	summary := fmt.Sprintf("Create ad group %q in campaign %s (status %s)", args.Name, args.CampaignID, status)
+	if !args.OmitType {
+		summary = fmt.Sprintf("Create %s ad group %q in campaign %s (status %s)", adGroupType, args.Name, args.CampaignID, status)
+	}
 	res, err := previewMutate(tool, cid, summary, []any{op})
 	if err != nil {
 		return WriteResult{}, err
@@ -250,6 +268,7 @@ func init() {
 	adGroupCreateCmd.Flags().StringVar(&createAdGroupArgs.CampaignID, "campaign-id", "", "campaign ID (required)")
 	adGroupCreateCmd.Flags().StringVar(&createAdGroupArgs.Name, "name", "", "ad group name (required)")
 	adGroupCreateCmd.Flags().Int64Var(&createAdGroupArgs.CpcBidMicros, "cpc-bid-micros", 0, "default CPC bid in micros")
+	adGroupCreateCmd.Flags().StringVar(&createAdGroupArgs.Type, "type", "", "ad group type: SEARCH_STANDARD (default), SEARCH_DYNAMIC_ADS, or DISPLAY_STANDARD (immutable once created)")
 	adGroupCreateCmd.Flags().BoolVar(&createAdGroupArgs.OmitType, "omit-type", false, "omit ad group type (required for App campaigns)")
 	adGroupCreateCmd.Flags().StringVar(&createAdGroupArgs.Status, "status", "", "ENABLED, PAUSED (default), or REMOVED")
 	adGroupCreateCmd.Flags().StringVar(&createAdGroupArgs.Confirm, "confirm", "", "confirm token from a previous preview")

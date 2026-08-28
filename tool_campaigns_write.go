@@ -115,12 +115,18 @@ func geoTargetTypeSetting(positive, negative string) (map[string]any, []string, 
 	return setting, mask, nil
 }
 
-// adGroupTypeForChannel maps a channel type to its standard ad group type.
-func adGroupTypeForChannel(channelType string) string {
+// adGroupTypeForChannel maps a channel type to its standard ad group type. A
+// campaign carrying a dynamic search ads setting is the one Search campaign
+// whose ad group is not SEARCH_STANDARD — its ad group must be dynamic, or the
+// campaign has nowhere to put a dynamic ad (issue #60).
+func adGroupTypeForChannel(channelType string, dynamicSearchAds bool) string {
 	if channelType == "DISPLAY" {
-		return "DISPLAY_STANDARD"
+		return adGroupTypeDisplayStandard
 	}
-	return "SEARCH_STANDARD"
+	if dynamicSearchAds {
+		return adGroupTypeSearchDynamic
+	}
+	return adGroupTypeSearchStandard
 }
 
 // DraftCampaignArgs drafts a new campaign with budget, ad group, and optional
@@ -143,8 +149,14 @@ type DraftCampaignArgs struct {
 	// Location options — how targeted/excluded locations are matched.
 	PositiveGeoTargetType string `json:"positive_geo_target_type,omitempty" jsonschema:"how targeted locations are matched: PRESENCE_OR_INTEREST (the Google default) or PRESENCE for people in the location only"`
 	NegativeGeoTargetType string `json:"negative_geo_target_type,omitempty" jsonschema:"how excluded locations are matched: PRESENCE (recommended) or PRESENCE_OR_INTEREST, which most campaign types no longer accept"`
-	Status                string `json:"status,omitempty" jsonschema:"ENABLED or PAUSED; defaults to PAUSED"`
-	Confirm               string `json:"confirm,omitempty" jsonschema:"a confirm token from a previous preview; omit to preview"`
+	// Dynamic Search Ads. Setting the domain and language makes this a DSA
+	// campaign, whose ad group is created as SEARCH_DYNAMIC_ADS — the type is
+	// immutable, so it can only be decided here (issue #60).
+	DSADomain              string `json:"dsa_domain,omitempty" jsonschema:"make this a Dynamic Search Ads campaign targeting this domain, e.g. example.com; requires dsa_language_code"`
+	DSALanguageCode        string `json:"dsa_language_code,omitempty" jsonschema:"the language of the DSA domain, e.g. en; required with dsa_domain"`
+	DSAUseSuppliedURLsOnly bool   `json:"dsa_use_supplied_urls_only,omitempty" jsonschema:"serve only URLs supplied by page feeds rather than Google's crawl of the domain"`
+	Status                 string `json:"status,omitempty" jsonschema:"ENABLED or PAUSED; defaults to PAUSED"`
+	Confirm                string `json:"confirm,omitempty" jsonschema:"a confirm token from a previous preview; omit to preview"`
 }
 
 func runDraftCampaign(ctx context.Context, c *Client, args DraftCampaignArgs) (WriteResult, error) {
@@ -192,15 +204,31 @@ func runDraftCampaign(ctx context.Context, c *Client, args DraftCampaignArgs) (W
 	if err != nil {
 		return WriteResult{}, err
 	}
+	channelType := args.ChannelType
+	if channelType == "" {
+		channelType = "SEARCH"
+	}
+	dsaSetting, _, err := dynamicSearchAdsSetting(args.DSADomain, args.DSALanguageCode, args.DSAUseSuppliedURLsOnly)
+	if err != nil {
+		return WriteResult{}, err
+	}
+	if dsaSetting != nil {
+		if channelType != "SEARCH" {
+			return WriteResult{}, fmt.Errorf("dynamic search ads need a SEARCH campaign, but channel_type is %s — drop the dsa_* arguments or set channel_type to SEARCH", channelType)
+		}
+		// A SEARCH_DYNAMIC_ADS ad group matches pages through dynamic ad
+		// targets, not keywords, so Google rejects a keyword criterion in one.
+		// Staging them anyway would fail only at confirm, after the campaign
+		// half of the batch looked fine (issue #14).
+		if len(args.Keywords) > 0 {
+			return WriteResult{}, fmt.Errorf("a Dynamic Search Ads ad group cannot hold keywords — it matches pages through dynamic ad targets; drop the keywords here and add targets with add_webpage_targets once the ad group exists")
+		}
+	}
 	if args.Confirm != "" {
 		return applyConfirmed(ctx, c, tool, args.Confirm)
 	}
 
 	cid := normalizeCustomerID(args.CustomerID)
-	channelType := args.ChannelType
-	if channelType == "" {
-		channelType = "SEARCH"
-	}
 	budgetResource := fmt.Sprintf("customers/%s/campaignBudgets/-1", cid)
 	campaignResource := fmt.Sprintf("customers/%s/campaigns/-2", cid)
 	adGroupResource := fmt.Sprintf("customers/%s/adGroups/-3", cid)
@@ -239,6 +267,9 @@ func runDraftCampaign(ctx context.Context, c *Client, args DraftCampaignArgs) (W
 	if geoSetting != nil {
 		campaignCreate["geoTargetTypeSetting"] = geoSetting
 	}
+	if dsaSetting != nil {
+		campaignCreate["dynamicSearchAdsSetting"] = dsaSetting
+	}
 	if err := applyBiddingStrategyCreate(campaignCreate, args.BiddingStrategy, args.TargetCPA, args.TargetROAS); err != nil {
 		return WriteResult{}, err
 	}
@@ -266,7 +297,7 @@ func runDraftCampaign(ctx context.Context, c *Client, args DraftCampaignArgs) (W
 		"name":         args.AdGroupName,
 		"campaign":     campaignResource,
 		"status":       string(status),
-		"type":         adGroupTypeForChannel(channelType),
+		"type":         adGroupTypeForChannel(channelType, dsaSetting != nil),
 		"resourceName": adGroupResource,
 	}}})
 
@@ -280,6 +311,10 @@ func runDraftCampaign(ctx context.Context, c *Client, args DraftCampaignArgs) (W
 
 	summary := fmt.Sprintf("Draft %s campaign %q (budget %.2f/day, ad group %q, %d keyword(s), status %s)",
 		channelType, args.CampaignName, args.DailyBudget, args.AdGroupName, len(args.Keywords), status)
+	if dsa := dsaCampaignSummary(dsaSetting); dsa != "" {
+		summary = fmt.Sprintf("Draft %s campaign %q with %s (budget %.2f/day, dynamic ad group %q, status %s)",
+			channelType, args.CampaignName, dsa, args.DailyBudget, args.AdGroupName, status)
+	}
 	res, err := previewMutate(tool, cid, summary, ops)
 	if err != nil {
 		return WriteResult{}, err
@@ -382,6 +417,9 @@ func init() {
 	f.StringArrayVar(&draftCampaignArgs.LanguageIDs, "language-id", nil, "language constant ID (repeatable)")
 	f.StringVar(&draftCampaignArgs.PositiveGeoTargetType, "positive-geo-target-type", "", "location option for targeted locations: PRESENCE_OR_INTEREST or PRESENCE")
 	f.StringVar(&draftCampaignArgs.NegativeGeoTargetType, "negative-geo-target-type", "", "location option for excluded locations: PRESENCE (recommended) or PRESENCE_OR_INTEREST")
+	f.StringVar(&draftCampaignArgs.DSADomain, "dsa-domain", "", "make this a Dynamic Search Ads campaign for this domain, e.g. example.com (needs --dsa-language-code)")
+	f.StringVar(&draftCampaignArgs.DSALanguageCode, "dsa-language-code", "", "language of the DSA domain, e.g. en (needs --dsa-domain)")
+	f.BoolVar(&draftCampaignArgs.DSAUseSuppliedURLsOnly, "dsa-use-supplied-urls-only", false, "serve only page-feed URLs rather than Google's crawl of the domain")
 	f.StringVar(&draftCampaignArgs.Status, "status", "", "ENABLED, PAUSED (default), or REMOVED")
 	f.StringVar(&draftCampaignArgs.Confirm, "confirm", "", "confirm token from a previous preview")
 	_ = campaignCreateCmd.MarkFlagRequired("name")

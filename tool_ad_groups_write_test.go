@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestCreateAdGroup_DefaultsPausedWithHint(t *testing.T) {
 	useTempState(t)
@@ -207,5 +210,52 @@ func TestUpdateAdGroup_RejectsContradictoryArguments(t *testing.T) {
 				t.Error("expected the arguments to be rejected")
 			}
 		})
+	}
+}
+
+func TestCreateAdGroup_DynamicType(t *testing.T) {
+	useTempState(t)
+	srv, cap := mutateServer(t)
+	defer srv.Close()
+	c := newTestClient(t, srv)
+
+	// An ad group's type is fixed at creation, so a Dynamic Search Ads ad
+	// group can only be asked for here (issue #60).
+	args := CreateAdGroupArgs{CustomerID: "1", CampaignID: "111", Name: "Dynamic", Type: "search_dynamic_ads"}
+	prev, err := runCreateAdGroup(t.Context(), c, args)
+	if err != nil {
+		t.Fatalf("preview: %v", err)
+	}
+	if !strings.Contains(prev.Preview, "SEARCH_DYNAMIC_ADS ad group") {
+		t.Errorf("preview should name the type, got %q", prev.Preview)
+	}
+	args.Confirm = prev.Token
+	if _, err := runCreateAdGroup(t.Context(), c, args); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	create := opCreate(t, cap.firstOp(t), "adGroupOperation")
+	if create["type"] != "SEARCH_DYNAMIC_ADS" {
+		t.Errorf("type = %v, want SEARCH_DYNAMIC_ADS", create["type"])
+	}
+}
+
+func TestCreateAdGroup_RejectsAnUnsupportedType(t *testing.T) {
+	useTempState(t)
+	_, err := runCreateAdGroup(t.Context(), nil, CreateAdGroupArgs{CustomerID: "1", CampaignID: "1", Name: "AG", Type: "VIDEO_BUMPER"})
+	if err == nil {
+		t.Fatal("expected an error for an unsupported ad group type")
+	}
+	if !strings.Contains(err.Error(), "SEARCH_DYNAMIC_ADS") {
+		t.Errorf("error should list the supported types, got %q", err)
+	}
+}
+
+func TestCreateAdGroup_RejectsTypeWithOmitType(t *testing.T) {
+	useTempState(t)
+	_, err := runCreateAdGroup(t.Context(), nil, CreateAdGroupArgs{
+		CustomerID: "1", CampaignID: "1", Name: "AG", Type: "SEARCH_DYNAMIC_ADS", OmitType: true,
+	})
+	if err == nil {
+		t.Fatal("expected an error when type and omit_type are combined")
 	}
 }

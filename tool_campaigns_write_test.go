@@ -371,3 +371,117 @@ func countLocationCriteria(t *testing.T, ops []any) (targeted, excluded int) {
 	}
 	return targeted, excluded
 }
+
+func TestDraftCampaign_DynamicSearchAdsCampaign(t *testing.T) {
+	useTempState(t)
+	srv, cap := mutateServer(t)
+	defer srv.Close()
+	c := newTestClient(t, srv)
+
+	args := DraftCampaignArgs{
+		CustomerID: "123-456-7890", CampaignName: "DSA — Catalogue", DailyBudget: 25,
+		BiddingStrategy: "MAXIMIZE_CONVERSIONS", AdGroupName: "Dynamic",
+		DSADomain: "example.com", DSALanguageCode: "en", DSAUseSuppliedURLsOnly: true,
+	}
+	prev, err := runDraftCampaign(t.Context(), c, args)
+	if err != nil {
+		t.Fatalf("preview: %v", err)
+	}
+	if !strings.Contains(prev.Preview, "dynamic search ads for example.com (en), supplied URLs only") {
+		t.Errorf("preview should describe the DSA setting, got %q", prev.Preview)
+	}
+
+	args.Confirm = prev.Token
+	if _, err := runDraftCampaign(t.Context(), c, args); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	ops := cap.lastOps()
+	campaign := opCreate(t, ops[1].(map[string]any), "campaignOperation")
+	setting, ok := campaign["dynamicSearchAdsSetting"].(map[string]any)
+	if !ok {
+		t.Fatalf("campaign has no dynamicSearchAdsSetting: %v", campaign)
+	}
+	if setting["domainName"] != "example.com" || setting["languageCode"] != "en" || setting["useSuppliedUrlsOnly"] != true {
+		t.Errorf("dynamicSearchAdsSetting = %v", setting)
+	}
+	// The ad group has to be dynamic in the same batch: its type is immutable,
+	// so a standard ad group here could never be fixed up afterwards.
+	adGroup := opCreate(t, ops[2].(map[string]any), "adGroupOperation")
+	if adGroup["type"] != "SEARCH_DYNAMIC_ADS" {
+		t.Errorf("ad group type = %v, want SEARCH_DYNAMIC_ADS", adGroup["type"])
+	}
+}
+
+func TestDraftCampaign_StandardCampaignKeepsStandardAdGroup(t *testing.T) {
+	useTempState(t)
+	srv, cap := mutateServer(t)
+	defer srv.Close()
+	c := newTestClient(t, srv)
+
+	args := DraftCampaignArgs{
+		CustomerID: "1", CampaignName: "Brand", DailyBudget: 10,
+		BiddingStrategy: "MANUAL_CPC", AdGroupName: "AG",
+	}
+	prev, err := runDraftCampaign(t.Context(), c, args)
+	if err != nil {
+		t.Fatalf("preview: %v", err)
+	}
+	args.Confirm = prev.Token
+	if _, err := runDraftCampaign(t.Context(), c, args); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	ops := cap.lastOps()
+	campaign := opCreate(t, ops[1].(map[string]any), "campaignOperation")
+	if _, exists := campaign["dynamicSearchAdsSetting"]; exists {
+		t.Errorf("a non-DSA campaign must carry no dynamicSearchAdsSetting: %v", campaign)
+	}
+	adGroup := opCreate(t, ops[2].(map[string]any), "adGroupOperation")
+	if adGroup["type"] != "SEARCH_STANDARD" {
+		t.Errorf("ad group type = %v, want SEARCH_STANDARD", adGroup["type"])
+	}
+}
+
+func TestDraftCampaign_DSARejectsKeywords(t *testing.T) {
+	useTempState(t)
+	// A dynamic ad group matches through webpage criteria; a keyword in one is
+	// rejected by Google, so it must not stage and fail only at confirm.
+	_, err := runDraftCampaign(t.Context(), nil, DraftCampaignArgs{
+		CustomerID: "1", CampaignName: "DSA", DailyBudget: 10,
+		BiddingStrategy: "MANUAL_CPC", AdGroupName: "Dynamic",
+		DSADomain: "example.com", DSALanguageCode: "en",
+		Keywords: []KeywordWithMatchType{{Text: "shoes", MatchType: "EXACT"}},
+	})
+	if err == nil {
+		t.Fatal("expected an error for keywords in a DSA ad group")
+	}
+	if !strings.Contains(err.Error(), "dynamic ad targets") {
+		t.Errorf("error should point at dynamic ad targets, got %q", err)
+	}
+}
+
+func TestDraftCampaign_DSARejectsANonSearchChannel(t *testing.T) {
+	useTempState(t)
+	_, err := runDraftCampaign(t.Context(), nil, DraftCampaignArgs{
+		CustomerID: "1", CampaignName: "DSA", DailyBudget: 10,
+		BiddingStrategy: "MANUAL_CPC", AdGroupName: "Dynamic", ChannelType: "DISPLAY",
+		DSADomain: "example.com", DSALanguageCode: "en",
+	})
+	if err == nil {
+		t.Fatal("expected an error for dynamic search ads on a DISPLAY campaign")
+	}
+	if !strings.Contains(err.Error(), "SEARCH") {
+		t.Errorf("error should name the channel needed, got %q", err)
+	}
+}
+
+func TestDraftCampaign_DSARequiresBothDomainAndLanguage(t *testing.T) {
+	useTempState(t)
+	for _, args := range []DraftCampaignArgs{
+		{CustomerID: "1", CampaignName: "DSA", DailyBudget: 10, BiddingStrategy: "MANUAL_CPC", AdGroupName: "AG", DSADomain: "example.com"},
+		{CustomerID: "1", CampaignName: "DSA", DailyBudget: 10, BiddingStrategy: "MANUAL_CPC", AdGroupName: "AG", DSALanguageCode: "en"},
+	} {
+		if _, err := runDraftCampaign(t.Context(), nil, args); err == nil {
+			t.Errorf("expected an error for a half-specified DSA setting: %+v", args)
+		}
+	}
+}

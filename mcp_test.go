@@ -71,6 +71,7 @@ func TestMCP_RegistrationIntegrity(t *testing.T) {
 		"google_conversions", "google_policy", "google_extensions", "google_keyword_ideas", "google_keyword_forecasts",
 		"google_list_recommendations", "google_set_campaign_budget", "google_delete_campaign_budget", "google_draft_campaign", "google_update_campaign",
 		"google_create_ad_group", "google_draft_responsive_search_ad", "google_draft_keywords",
+		"google_draft_dynamic_search_ad", "google_add_webpage_targets",
 		"google_create_portfolio_bidding_strategy", "google_create_custom_audience", "google_upload_image_asset",
 		"google_set_campaign_schedule", "google_create_pmax_campaign", "google_create_app_campaign", "google_pause_entity", "google_enable_entity",
 		"google_remove_entity", "google_apply_recommendation", "google_dismiss_recommendation",
@@ -79,8 +80,8 @@ func TestMCP_RegistrationIntegrity(t *testing.T) {
 			t.Errorf("MCP tool %q is not registered", want)
 		}
 	}
-	if len(names) != 51 {
-		t.Errorf("expected 51 registered MCP tools, got %d (update this count when adding/removing a tool)", len(names))
+	if len(names) != 53 {
+		t.Errorf("expected 53 registered MCP tools, got %d (update this count when adding/removing a tool)", len(names))
 	}
 }
 

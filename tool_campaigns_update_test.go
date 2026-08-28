@@ -1400,3 +1400,159 @@ func TestParseCampaignDate(t *testing.T) {
 		}
 	}
 }
+
+func TestUpdateCampaign_AddsDynamicSearchAdsSetting(t *testing.T) {
+	useTempState(t)
+	srv, cap := mutateServer(t)
+	defer srv.Close()
+	c := newTestClient(t, srv)
+
+	// The recovery path for a Search campaign that should have been a DSA
+	// campaign: the setting can be added after the fact (issue #60).
+	args := UpdateCampaignArgs{
+		CustomerID: "1", CampaignID: "111",
+		DSADomain: "example.com", DSALanguageCode: "en",
+	}
+	prev, err := runUpdateCampaign(t.Context(), c, args)
+	if err != nil {
+		t.Fatalf("preview: %v", err)
+	}
+	if !strings.Contains(prev.Preview, "dynamic search ads for example.com (en)") {
+		t.Errorf("preview should describe the DSA setting, got %q", prev.Preview)
+	}
+	args.Confirm = prev.Token
+	if _, err := runUpdateCampaign(t.Context(), c, args); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	op, _ := cap.firstOp(t)["campaignOperation"].(map[string]any)
+	// The message has defined sub-fields, so the leaves are masked, not the
+	// message — and all three travel together because Google requires the
+	// domain and the language on every write of the setting.
+	want := "dynamicSearchAdsSetting.domainName,dynamicSearchAdsSetting.languageCode,dynamicSearchAdsSetting.useSuppliedUrlsOnly"
+	if op["updateMask"] != want {
+		t.Errorf("updateMask = %v, want %q", op["updateMask"], want)
+	}
+	update, _ := op["update"].(map[string]any)
+	setting, ok := update["dynamicSearchAdsSetting"].(map[string]any)
+	if !ok {
+		t.Fatalf("update has no dynamicSearchAdsSetting: %v", update)
+	}
+	if setting["domainName"] != "example.com" || setting["languageCode"] != "en" || setting["useSuppliedUrlsOnly"] != false {
+		t.Errorf("dynamicSearchAdsSetting = %v", setting)
+	}
+}
+
+func TestUpdateCampaign_DSARequiresBothDomainAndLanguage(t *testing.T) {
+	useTempState(t)
+	for _, args := range []UpdateCampaignArgs{
+		{CustomerID: "1", CampaignID: "111", DSADomain: "example.com"},
+		{CustomerID: "1", CampaignID: "111", DSALanguageCode: "en"},
+		{CustomerID: "1", CampaignID: "111", DSAUseSuppliedURLsOnly: true},
+	} {
+		if _, err := runUpdateCampaign(t.Context(), nil, args); err == nil {
+			t.Errorf("expected an error for a half-specified DSA setting: %+v", args)
+		}
+	}
+}
+
+func TestUpdateCampaign_DSASettingSharesTheCampaignOperation(t *testing.T) {
+	useTempState(t)
+	srv, cap := mutateServer(t)
+	defer srv.Close()
+	c := newTestClient(t, srv)
+
+	// Both settings live on the campaign resource, so they must merge into one
+	// operation and one mask rather than one overwriting the other.
+	args := UpdateCampaignArgs{
+		CustomerID: "1", CampaignID: "111",
+		DSADomain: "example.com", DSALanguageCode: "en",
+		PositiveGeoTargetType: "PRESENCE",
+	}
+	prev, err := runUpdateCampaign(t.Context(), c, args)
+	if err != nil {
+		t.Fatalf("preview: %v", err)
+	}
+	args.Confirm = prev.Token
+	if _, err := runUpdateCampaign(t.Context(), c, args); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if ops := cap.lastOps(); len(ops) != 1 {
+		t.Fatalf("expected one campaign operation, got %d", len(ops))
+	}
+	op, _ := cap.firstOp(t)["campaignOperation"].(map[string]any)
+	mask, _ := op["updateMask"].(string)
+	for _, want := range []string{
+		"geoTargetTypeSetting.positiveGeoTargetType",
+		"dynamicSearchAdsSetting.domainName",
+		"dynamicSearchAdsSetting.languageCode",
+		"dynamicSearchAdsSetting.useSuppliedUrlsOnly",
+	} {
+		if !strings.Contains(mask, want) {
+			t.Errorf("updateMask %q is missing %q", mask, want)
+		}
+	}
+	update, _ := op["update"].(map[string]any)
+	if _, ok := update["geoTargetTypeSetting"].(map[string]any); !ok {
+		t.Errorf("update lost geoTargetTypeSetting: %v", update)
+	}
+	if _, ok := update["dynamicSearchAdsSetting"].(map[string]any); !ok {
+		t.Errorf("update lost dynamicSearchAdsSetting: %v", update)
+	}
+}
+
+// TestUpdateCampaign_ClearTargetPreviewDisclosesTheDSAChange guards the
+// preview-first safety flow: a clear and a dynamic search ads setting share one
+// campaign operation, so the operation count cannot reveal the second change —
+// the summary has to name it, or the token is confirmed for more than it says.
+func TestUpdateCampaign_ClearTargetPreviewDisclosesTheDSAChange(t *testing.T) {
+	useTempState(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "googleAds:search"):
+			_, _ = w.Write([]byte(`{"results":[{"campaign":{"biddingStrategyType":"MAXIMIZE_CONVERSIONS"}}]}`))
+		default:
+			_, _ = w.Write([]byte(`{"mutateOperationResponses":[{}]}`))
+		}
+	}))
+	defer srv.Close()
+
+	preview, err := runUpdateCampaign(t.Context(), newTestClient(t, srv), UpdateCampaignArgs{
+		CustomerID: "1", CampaignID: "5", ClearTargetCPA: true,
+		DSADomain: "example.com", DSALanguageCode: "en",
+	})
+	if err != nil {
+		t.Fatalf("preview: %v", err)
+	}
+	if !strings.Contains(preview.Preview, "Remove the target CPA from campaign 5") {
+		t.Errorf("preview should lead with the clear, got %q", preview.Preview)
+	}
+	if !strings.Contains(preview.Preview, "dynamic search ads for example.com (en)") {
+		t.Errorf("preview hides the staged DSA setting, got %q", preview.Preview)
+	}
+}
+
+func TestUpdateCampaign_ClearTargetAlonePreviewIsUnchanged(t *testing.T) {
+	useTempState(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "googleAds:search"):
+			_, _ = w.Write([]byte(`{"results":[{"campaign":{"biddingStrategyType":"MAXIMIZE_CONVERSIONS"}}]}`))
+		default:
+			_, _ = w.Write([]byte(`{"mutateOperationResponses":[{}]}`))
+		}
+	}))
+	defer srv.Close()
+
+	preview, err := runUpdateCampaign(t.Context(), newTestClient(t, srv), UpdateCampaignArgs{
+		CustomerID: "1", CampaignID: "5", ClearTargetCPA: true,
+	})
+	if err != nil {
+		t.Fatalf("preview: %v", err)
+	}
+	// Nothing else is staged, so the summary gains no "and …" suffix.
+	if strings.Contains(preview.Preview, " and ") {
+		t.Errorf("a lone clear should carry no other-changes suffix, got %q", preview.Preview)
+	}
+}
