@@ -109,7 +109,10 @@ func runSetCampaignSchedule(ctx context.Context, c *Client, args SetScheduleArgs
 			},
 		}
 	}
-	summary := fmt.Sprintf("Add %d ad-schedule window(s) to campaign %s (additive: existing windows are kept)", len(args.Schedules), args.CampaignID)
+	// Still additive — Google has no "replace the schedule" operation — but the
+	// windows are no longer one-way: campaign_criteria lists what a campaign
+	// already has, and remove_entity takes a campaign_criterion away.
+	summary := fmt.Sprintf("Add %d ad-schedule window(s) to campaign %s (additive: existing windows are kept; remove one with remove_entity campaign_criterion)", len(args.Schedules), args.CampaignID)
 	return previewMutate(tool, cid, summary, ops)
 }
 

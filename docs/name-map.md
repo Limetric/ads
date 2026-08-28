@@ -23,11 +23,11 @@ actually landed.
    rename, and keeping aliases would re-take the exact names the next platform
    wants.
 
-> #36 says 52 MCP tools; the tree actually registers **50** — 49 at the time of
+> #36 says 52 MCP tools; the tree actually registers **51** — 49 at the time of
 > the rename, plus what has landed since (marked `—` in the Old column). The
 > count in the issue is stale, not a missing group.
 
-## MCP tools (50)
+## MCP tools (51)
 
 Uniform: every tool gains a `google_` prefix, nothing else changes. Descriptions,
 `Args` structs, and handlers are untouched.
@@ -63,6 +63,7 @@ Uniform: every tool gains a `google_` prefix, nothing else changes. Descriptions
 | `pause_entity` | `google_pause_entity` |
 | `enable_entity` | `google_enable_entity` |
 | `remove_entity` | `google_remove_entity` |
+| — | `google_campaign_criteria` |
 | `set_campaign_schedule` | `google_set_campaign_schedule` |
 | `create_portfolio_bidding_strategy` | `google_create_portfolio_bidding_strategy` |
 | — | `google_update_portfolio_bidding_strategy` |
@@ -116,6 +117,7 @@ commands in total. The subcommand trees below each are untouched.
 | `goads campaign create` | `ads google campaign create` |
 | `goads campaign create-app` | `ads google campaign create-app` |
 | `goads campaign update` | `ads google campaign update` |
+| — | `ads google campaign criteria` |
 | `goads campaigns` | `ads google campaigns` |
 | `goads conversions` | `ads google conversions` |
 | `goads enable` | `ads google enable` |

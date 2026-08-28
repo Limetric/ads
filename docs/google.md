@@ -147,14 +147,16 @@ tool. See [`name-map.md`](name-map.md) for the full CLI ↔ MCP map.
 **Reads** — `search` (raw GAQL), `report`, `accounts` (+ `accounts info` for
 currency and time zone), `campaigns`, `ads`, keyword performance / search terms
 / negatives, `geo search` + `geo performance`, `conversions`, `policy`,
-`extensions`, Keyword Planner ideas and forecasts, and recommendation listing.
+`extensions`, a campaign's criteria, Keyword Planner ideas and forecasts, and
+recommendation listing.
 
 **Writes** (all preview-then-confirm) — Search, App, and Performance Max
 campaign create/update, ad group create/update, responsive search ad drafting,
 keyword add/remove (plus negatives), portfolio bidding strategy create/update
 and keyword bids, sitelink/callout/structured-snippet extensions, custom audiences and
 audience targeting, image/YouTube/text asset upload, ad scheduling,
-pause/enable/remove, and recommendation apply/dismiss.
+pause/enable/remove (campaign criteria included), and recommendation
+apply/dismiss.
 
 `campaign create` and `campaign update` carry the budget, the bidding strategy,
 geo/language targeting, and the campaign's **location options** — Google's
@@ -185,7 +187,8 @@ exclusion to govern it, that setting configures an empty set.
 The same ID cannot be targeted and excluded at once — Google applies the
 exclusion, so it would silently do nothing — and that is rejected at preview.
 Both flags are **additive**: each call adds to what the campaign already
-carries.
+carries. To take a location back off, see
+[campaign criteria](#campaign-criteria-geo-language-ad-schedule) below.
 
 ### Clearing a bidding target
 
@@ -278,6 +281,31 @@ to the strategy at once — which is the point of a portfolio, and the reason it
 is worth seeing twice. A rename takes one. Only the account that *owns* a
 strategy can change it: a strategy shared down from a manager is rejected with
 the manager's customer ID to re-run against.
+
+### Campaign criteria: geo, language, ad schedule
+
+Geo targets, languages, ad-schedule windows, and campaign negative keywords are
+all *campaign criteria*. `campaign update --geo-target-id/--language-id` and
+`schedule` add them; `campaign criteria` lists what a campaign already carries,
+and `remove` takes one away:
+
+```bash
+# What is on the campaign? Each row carries the ID the removal takes.
+ads google campaign criteria --campaign-id 111 --format table
+ads google campaign criteria --campaign-id 111 --type AD_SCHEDULE
+
+# Remove one. Destructive, so it takes two confirmations.
+ads google remove --type campaign_criterion --id 111~222
+ads google remove --type campaign_criterion --id 111~222 --confirm <token>
+ads google remove --type campaign_criterion --id 111~222 --confirm <second-token>
+```
+
+A criterion is addressed by the composite `campaignId~criterionId`. The
+criterion ID is minted by Google, not chosen by you, which is why the listing
+lands with the removal: it reports `remove_entity_id` ready to pass straight to
+`remove`. `schedule` remains additive — Google has no "replace the schedule"
+operation — so a wrong window is corrected by adding the right one and removing
+the wrong one.
 
 New campaigns, ad groups, and ads ship **PAUSED** by default.
 
