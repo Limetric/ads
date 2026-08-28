@@ -1255,3 +1255,148 @@ func TestUpdateCampaign_RejectsATargetedAndExcludedLocation(t *testing.T) {
 		t.Fatal("targeting and excluding the same place must be rejected")
 	}
 }
+
+func TestUpdateCampaign_RenamesAndSetsRunDates(t *testing.T) {
+	useTempState(t)
+	srv, cap := mutateServer(t)
+	defer srv.Close()
+	c := newTestClient(t, srv)
+
+	args := UpdateCampaignArgs{
+		CustomerID: "1", CampaignID: "5",
+		Name: "Brand — EU", StartDate: "2026-09-01", EndDate: "2026-12-31",
+	}
+	prev, err := runUpdateCampaign(t.Context(), c, args)
+	if err != nil {
+		t.Fatalf("preview: %v", err)
+	}
+	// The preview names what changes; "1 operation(s)" says nothing about a
+	// rename or a finish line.
+	if !strings.Contains(prev.Preview, "Brand — EU") || !strings.Contains(prev.Preview, "end 2026-12-31") {
+		t.Errorf("preview does not describe the change: %s", prev.Preview)
+	}
+	args.Confirm = prev.Token
+	if _, err := runUpdateCampaign(t.Context(), c, args); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	op, _ := cap.firstOp(t)["campaignOperation"].(map[string]any)
+	upd := opUpdate(t, cap.firstOp(t), "campaignOperation")
+	// v23 has no plain start_date/end_date on a campaign; the run dates live in
+	// start_date_time/end_date_time, and a bare date takes the whole-day
+	// boundary for its end of the range.
+	if upd["name"] != "Brand — EU" || upd["startDateTime"] != "2026-09-01 00:00:00" || upd["endDateTime"] != "2026-12-31 23:59:59" {
+		t.Errorf("staged %v", upd)
+	}
+	if op["updateMask"] != "name,startDateTime,endDateTime" {
+		t.Errorf("updateMask = %v", op["updateMask"])
+	}
+}
+
+func TestUpdateCampaign_AcceptsAnExplicitTimeOfDay(t *testing.T) {
+	useTempState(t)
+	srv, cap := mutateServer(t)
+	defer srv.Close()
+	c := newTestClient(t, srv)
+
+	// Minute granularity is real for the campaign types that support it, so an
+	// explicit time passes through instead of being rounded to a whole day.
+	args := UpdateCampaignArgs{CustomerID: "1", CampaignID: "5", EndDate: "2026-12-31 17:30:00"}
+	prev, err := runUpdateCampaign(t.Context(), c, args)
+	if err != nil {
+		t.Fatalf("preview: %v", err)
+	}
+	args.Confirm = prev.Token
+	if _, err := runUpdateCampaign(t.Context(), c, args); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if upd := opUpdate(t, cap.firstOp(t), "campaignOperation"); upd["endDateTime"] != "2026-12-31 17:30:00" {
+		t.Errorf("endDateTime = %v", upd["endDateTime"])
+	}
+}
+
+func TestUpdateCampaign_ClearEndDateUnsetsTheLeaf(t *testing.T) {
+	useTempState(t)
+	srv, cap := mutateServer(t)
+	defer srv.Close()
+	c := newTestClient(t, srv)
+
+	args := UpdateCampaignArgs{CustomerID: "1", CampaignID: "5", ClearEndDate: true}
+	prev, err := runUpdateCampaign(t.Context(), c, args)
+	if err != nil {
+		t.Fatalf("preview: %v", err)
+	}
+	args.Confirm = prev.Token
+	if _, err := runUpdateCampaign(t.Context(), c, args); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	op, _ := cap.firstOp(t)["campaignOperation"].(map[string]any)
+	if op["updateMask"] != "endDateTime" {
+		t.Errorf("updateMask = %v", op["updateMask"])
+	}
+	// "To set an existing campaign to run indefinitely, clear this field":
+	// masked, and left out of the update, is what Google reads as cleared.
+	if upd := opUpdate(t, cap.firstOp(t), "campaignOperation"); upd["endDateTime"] != nil {
+		t.Errorf("clear must leave endDateTime out of the update, got %v", upd)
+	}
+}
+
+func TestUpdateCampaign_RenameMasksOnlyTheName(t *testing.T) {
+	useTempState(t)
+	srv, cap := mutateServer(t)
+	defer srv.Close()
+	c := newTestClient(t, srv)
+
+	// Masking an omitted leaf clears it, so a rename must not touch the dates.
+	args := UpdateCampaignArgs{CustomerID: "1", CampaignID: "5", Name: "Renamed"}
+	prev, err := runUpdateCampaign(t.Context(), c, args)
+	if err != nil {
+		t.Fatalf("preview: %v", err)
+	}
+	args.Confirm = prev.Token
+	if _, err := runUpdateCampaign(t.Context(), c, args); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	op, _ := cap.firstOp(t)["campaignOperation"].(map[string]any)
+	if op["updateMask"] != "name" {
+		t.Errorf("updateMask = %v, want name alone", op["updateMask"])
+	}
+}
+
+func TestUpdateCampaign_RejectsBadDatesBeforeLookup(t *testing.T) {
+	useTempState(t)
+	cases := map[string]UpdateCampaignArgs{
+		"not a date":       {CustomerID: "1", CampaignID: "5", EndDate: "next Tuesday"},
+		"impossible date":  {CustomerID: "1", CampaignID: "5", EndDate: "2026-13-45"},
+		"unpadded date":    {CustomerID: "1", CampaignID: "5", StartDate: "2026-1-5"},
+		"end before start": {CustomerID: "1", CampaignID: "5", StartDate: "2026-09-01", EndDate: "2026-08-31"},
+		"clear and set":    {CustomerID: "1", CampaignID: "5", EndDate: "2026-12-31", ClearEndDate: true},
+	}
+	for name, args := range cases {
+		t.Run(name, func(t *testing.T) {
+			// A nil client would panic on any request, so reaching the API at
+			// all fails the test.
+			if _, err := runUpdateCampaign(t.Context(), nil, args); err == nil {
+				t.Error("expected the arguments to be rejected")
+			}
+		})
+	}
+}
+
+func TestParseCampaignDate(t *testing.T) {
+	// A bare date is completed to the whole-day boundary for its end of the
+	// range: 00:00:00 opening, 23:59:59 closing.
+	if got, err := parseCampaignDate("start_date", " 2026-09-01 ", campaignDayStart); err != nil || got != "2026-09-01 00:00:00" {
+		t.Errorf("start = %q err=%v", got, err)
+	}
+	if got, err := parseCampaignDate("end_date", "2026-12-31", campaignDayEnd); err != nil || got != "2026-12-31 23:59:59" {
+		t.Errorf("end = %q err=%v", got, err)
+	}
+	if got, err := parseCampaignDate("end_date", "2026-12-31 17:30:00", campaignDayEnd); err != nil || got != "2026-12-31 17:30:00" {
+		t.Errorf("explicit time = %q err=%v", got, err)
+	}
+	for _, bad := range []string{"", "20261231", "2026-12-32", "2026-1-1", "31/12/2026", "2026-12-31T17:30:00", "2026-12-31 17:30"} {
+		if _, err := parseCampaignDate("end_date", bad, campaignDayEnd); err == nil {
+			t.Errorf("parseCampaignDate(%q) should fail", bad)
+		}
+	}
+}

@@ -169,7 +169,7 @@ func addGoogleTools(reg *toolRegistrar, client *Client) {
 		runCreateAdGroup)
 
 	addTool(reg, client, "update_ad_group",
-		"Update an ad group's name, CPC bid, and/or ad rotation mode. Returns a preview + confirm token; pass Confirm to apply.",
+		"Update an ad group's name, CPC bid, ad-group-level TargetCpaMicros/TargetROAS (which override the campaign target for that ad group), and/or ad rotation mode. ClearCpcBid, ClearTargetCPA, and ClearTargetROAS remove a value so the ad group inherits again — omitting a number leaves it in place. Returns a preview + confirm token; pass Confirm to apply.",
 		runUpdateAdGroup)
 
 	addTool(reg, client, "draft_responsive_search_ad",
@@ -221,6 +221,6 @@ func addGoogleTools(reg *toolRegistrar, client *Client) {
 		runDraftCampaign)
 
 	addTool(reg, client, "update_campaign",
-		"Update a campaign's budget, bidding strategy, geo/language targeting (GeoTargetIDs to target locations, ExcludeGeoTargetIDs to exclude them), and/or location options (positive/negative geo target type). Set BiddingStrategy for a standard campaign-level strategy, or PortfolioStrategyID to attach the campaign to a shared strategy from create_portfolio_bidding_strategy so several campaigns pool their conversion volume. Set ClearTargetCPA (or ClearTargetROAS) to strip an optional target off a MAXIMIZE_CONVERSIONS (or MAXIMIZE_CONVERSION_VALUE) campaign — omitting TargetCPA/TargetROAS leaves the existing target in place. Returns a preview + confirm token; pass Confirm to apply.",
+		"Update a campaign's budget, bidding strategy, geo/language targeting (GeoTargetIDs to target locations, ExcludeGeoTargetIDs to exclude them), and/or location options (positive/negative geo target type). Set BiddingStrategy for a standard campaign-level strategy, or PortfolioStrategyID to attach the campaign to a shared strategy from create_portfolio_bidding_strategy so several campaigns pool their conversion volume. Set ClearTargetCPA (or ClearTargetROAS) to strip an optional target off a MAXIMIZE_CONVERSIONS (or MAXIMIZE_CONVERSION_VALUE) campaign — omitting TargetCPA/TargetROAS leaves the existing target in place. Name renames the campaign, and StartDate/EndDate (YYYY-MM-DD, or YYYY-MM-DD HH:MM:SS where the campaign type supports minute granularity) set campaign.start_date_time/end_date_time; ClearEndDate lets it run indefinitely. Returns a preview + confirm token; pass Confirm to apply.",
 		runUpdateCampaign)
 }

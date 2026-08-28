@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -350,11 +351,99 @@ func resolveCampaignBudgetResource(ctx context.Context, c *Client, customerID, c
 	return "", 0, fmt.Errorf("could not resolve a campaign budget for campaign %s — the campaign may not exist or has no associated budget", campaignID)
 }
 
+// Campaign run dates live in campaign.start_date_time / end_date_time, which
+// take "yyyy-MM-dd HH:mm:ss" in the customer's time zone. v23 has no plain
+// start_date/end_date field. Google's own instruction for a whole-day boundary
+// is to set the time component to 00:00:00 at the start and 23:59:59 at the
+// end, so a bare date supplied here is completed to the right end of its day.
+const (
+	campaignDayStart = " 00:00:00"
+	campaignDayEnd   = " 23:59:59"
+)
+
+// parseCampaignDate validates a campaign start/end boundary and returns it in
+// the "yyyy-MM-dd HH:mm:ss" form the API takes. A bare YYYY-MM-DD is completed
+// with dayTime, the whole-day boundary for that end of the range; an explicit
+// time is passed through, because minute granularity is real for the campaign
+// types that support it. A typo caught here costs no API round trip, and
+// time.Parse rejects the almost-right values a length check would let through
+// (2026-13-45).
+func parseCampaignDate(field, value, dayTime string) (string, error) {
+	v := strings.TrimSpace(value)
+	// time.Parse accepts non-canonical components (2026-1-5), which would reach
+	// the API in a shape it does not take, so the round trip has to match.
+	if t, err := time.Parse(time.DateTime, v); err == nil && t.Format(time.DateTime) == v {
+		return v, nil
+	}
+	if t, err := time.Parse(time.DateOnly, v); err == nil && t.Format(time.DateOnly) == v {
+		return v + dayTime, nil
+	}
+	return "", fmt.Errorf("%s must be YYYY-MM-DD, or YYYY-MM-DD HH:MM:SS for a campaign type that supports minute granularity, got %q", field, value)
+}
+
+// applyCampaignScheduleUpdate sets the campaign name and run dates on an update
+// map, recording each touched leaf in mask and returning a description of each
+// change for the preview summary. Only supplied fields are masked: masking an
+// omitted leaf clears it, so a rename must not also wipe the dates.
+func applyCampaignScheduleUpdate(args UpdateCampaignArgs, update map[string]any, mask *[]string) ([]string, error) {
+	if args.ClearEndDate && args.EndDate != "" {
+		return nil, fmt.Errorf("clear_end_date cannot be combined with end_date — pass clear_end_date alone to let the campaign run indefinitely, or end_date alone to move the finish line")
+	}
+	var changes []string
+	if args.Name != "" {
+		update["name"] = args.Name
+		*mask = append(*mask, "name")
+		changes = append(changes, fmt.Sprintf("rename to %q", args.Name))
+	}
+	var start, end string
+	if args.StartDate != "" {
+		parsed, err := parseCampaignDate("start_date", args.StartDate, campaignDayStart)
+		if err != nil {
+			return nil, err
+		}
+		start = parsed
+		update["startDateTime"] = start
+		*mask = append(*mask, "startDateTime")
+		changes = append(changes, "start "+start)
+	}
+	switch {
+	case args.EndDate != "":
+		parsed, err := parseCampaignDate("end_date", args.EndDate, campaignDayEnd)
+		if err != nil {
+			return nil, err
+		}
+		end = parsed
+		update["endDateTime"] = end
+		*mask = append(*mask, "endDateTime")
+		changes = append(changes, "end "+end)
+	case args.ClearEndDate:
+		// "To set an existing campaign to run indefinitely, clear this field" —
+		// so the leaf is masked and left out of the update, the same shape
+		// every other clear here uses.
+		*mask = append(*mask, "endDateTime")
+		changes = append(changes, "no end date")
+	}
+	// Both are zero-padded "yyyy-MM-dd HH:mm:ss", so they compare lexically.
+	if start != "" && end != "" && end < start {
+		return nil, fmt.Errorf("end_date %s is before start_date %s — a campaign cannot finish before it begins", end, start)
+	}
+	return changes, nil
+}
+
 // UpdateCampaignArgs updates an existing campaign's settings. Only the provided
 // fields change; at least one change must be specified.
 type UpdateCampaignArgs struct {
-	CustomerID      string `json:"customer_id,omitempty" jsonschema:"the Google Ads customer ID that owns the campaign; omit to use the configured default customer"`
-	CampaignID      string `json:"campaign_id" jsonschema:"the campaign ID to update"`
+	CustomerID string `json:"customer_id,omitempty" jsonschema:"the Google Ads customer ID that owns the campaign; omit to use the configured default customer"`
+	CampaignID string `json:"campaign_id" jsonschema:"the campaign ID to update"`
+	// Name and the run dates were settable at create time (name) or nowhere at
+	// all (dates); an end date is how a campaign is wound down on a schedule
+	// rather than by someone being present at the right moment (issue #54).
+	Name string `json:"name,omitempty" jsonschema:"a new name for the campaign"`
+	// The dates set campaign.start_date_time / end_date_time. A bare date is
+	// completed to the whole-day boundary for its end of the range.
+	StartDate       string `json:"start_date,omitempty" jsonschema:"the campaign's first day as YYYY-MM-DD, or YYYY-MM-DD HH:MM:SS where the campaign type supports minute granularity (Google rejects a change once the campaign has started)"`
+	EndDate         string `json:"end_date,omitempty" jsonschema:"the campaign's last day as YYYY-MM-DD, or YYYY-MM-DD HH:MM:SS where the campaign type supports minute granularity"`
+	ClearEndDate    bool   `json:"clear_end_date,omitempty" jsonschema:"remove the campaign's end date so it runs indefinitely; cannot be combined with end_date"`
 	BiddingStrategy string `json:"bidding_strategy,omitempty" jsonschema:"new standard (campaign-level) bidding strategy, e.g. MAXIMIZE_CONVERSIONS; mutually exclusive with portfolio_strategy_id"`
 	// PortfolioStrategyID attaches the campaign to a shared bidding strategy so
 	// several campaigns pool their conversion volume into one learning set.
@@ -526,6 +615,10 @@ func runUpdateCampaign(ctx context.Context, c *Client, args UpdateCampaignArgs) 
 		update["geoTargetTypeSetting"] = geoSetting
 		mask = append(mask, geoMask...)
 	}
+	scheduleChanges, err := applyCampaignScheduleUpdate(args, update, &mask)
+	if err != nil {
+		return WriteResult{}, err
+	}
 	if len(mask) > 0 {
 		ops = append(ops, map[string]any{"campaignOperation": map[string]any{"update": update, "updateMask": strings.Join(mask, ",")}})
 	}
@@ -551,6 +644,9 @@ func runUpdateCampaign(ctx context.Context, c *Client, args UpdateCampaignArgs) 
 		return WriteResult{}, fmt.Errorf("no changes specified for campaign update")
 	}
 	summary := fmt.Sprintf("Update campaign %s (%d operation(s))", args.CampaignID, len(ops))
+	if len(scheduleChanges) > 0 {
+		summary = fmt.Sprintf("Update campaign %s: %s (%d operation(s))", args.CampaignID, strings.Join(scheduleChanges, ", "), len(ops))
+	}
 	if clearTarget != nil {
 		summary = fmt.Sprintf("Remove the %s from campaign %s, leaving it on %s with no target", clearTarget.label, args.CampaignID, clearTarget.strategy)
 		if len(ops) > 1 {
@@ -594,6 +690,10 @@ func init() {
 	f := campaignUpdateCmd.Flags()
 	f.StringVar(&updateCampaignArgs.CustomerID, "customer-id", "", "Google Ads customer ID (falls back to the configured default)")
 	f.StringVar(&updateCampaignArgs.CampaignID, "campaign-id", "", "campaign ID (required)")
+	f.StringVar(&updateCampaignArgs.Name, "name", "", "new campaign name")
+	f.StringVar(&updateCampaignArgs.StartDate, "start-date", "", "campaign start, YYYY-MM-DD (or YYYY-MM-DD HH:MM:SS)")
+	f.StringVar(&updateCampaignArgs.EndDate, "end-date", "", "campaign end, YYYY-MM-DD (or YYYY-MM-DD HH:MM:SS)")
+	f.BoolVar(&updateCampaignArgs.ClearEndDate, "clear-end-date", false, "remove the campaign's end date so it runs indefinitely")
 	f.StringVar(&updateCampaignArgs.BiddingStrategy, "bidding-strategy", "", "new standard bidding strategy (mutually exclusive with --portfolio-strategy-id)")
 	f.StringVar(&updateCampaignArgs.PortfolioStrategyID, "portfolio-strategy-id", "", "attach the campaign to this portfolio bidding strategy (ID or resource name)")
 	f.Float64Var(&updateCampaignArgs.TargetCPA, "target-cpa", 0, "target CPA in currency units")
