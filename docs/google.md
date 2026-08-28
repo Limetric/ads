@@ -163,6 +163,26 @@ geo/language targeting, and the campaign's **location options** — Google's
 Performance Max create commands do not take them; set them afterwards with
 `campaign update`.
 
+### Clearing a bidding target
+
+`--target-cpa` / `--target-roas` are optional on `MAXIMIZE_CONVERSIONS` and
+`MAXIMIZE_CONVERSION_VALUE`, and *omitting* one on an update leaves the existing
+target alone — otherwise every unrelated campaign edit would wipe it. To drop
+the target and let the strategy bid without one, say so explicitly:
+
+```bash
+# Pure Maximize Conversions: keep the strategy, remove the target CPA.
+ads google campaign update --campaign-id 111 --clear-target-cpa
+ads google campaign update --campaign-id 111 --clear-target-cpa --confirm <token>
+```
+
+`--clear-target-roas` does the same for a `MAXIMIZE_CONVERSION_VALUE` campaign.
+Each flag applies only to its own strategy: `TARGET_CPA` and `TARGET_ROAS`
+*require* a target, so a campaign on one of those switches strategy instead
+(`--bidding-strategy MAXIMIZE_CONVERSIONS`), and a portfolio strategy's target
+is changed on the shared strategy itself. A clear flag cannot be combined with
+the target value it removes.
+
 ### Portfolio (shared) bidding strategies
 
 `--bidding-strategy` sets a **standard** strategy, which each campaign learns on

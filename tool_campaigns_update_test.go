@@ -985,3 +985,200 @@ func TestUpdateCampaign_PortfolioStrategyRejectsConflicts(t *testing.T) {
 		})
 	}
 }
+
+// TestUpdateCampaign_ClearTargetRemovesOptionalTarget covers the one shape an
+// omitted target cannot express: dropping the optional target off a "maximize"
+// strategy so the campaign bids without one. The strategy itself is preserved —
+// only the target leaf is masked, with the message sent empty.
+func TestUpdateCampaign_ClearTargetRemovesOptionalTarget(t *testing.T) {
+	tests := []struct {
+		name        string
+		args        UpdateCampaignArgs
+		current     string
+		wantKey     string
+		wantMask    string
+		wantSummary string
+	}{
+		{
+			name:        "target cpa from resolved strategy",
+			args:        UpdateCampaignArgs{ClearTargetCPA: true},
+			current:     "MAXIMIZE_CONVERSIONS",
+			wantKey:     "maximizeConversions",
+			wantMask:    "maximizeConversions.targetCpaMicros",
+			wantSummary: "Remove the target CPA from campaign 5",
+		},
+		{
+			name:        "target roas from resolved strategy",
+			args:        UpdateCampaignArgs{ClearTargetROAS: true},
+			current:     "MAXIMIZE_CONVERSION_VALUE",
+			wantKey:     "maximizeConversionValue",
+			wantMask:    "maximizeConversionValue.targetRoas,maximizeConversionValue.targetRoasTolerancePercentMillis",
+			wantSummary: "Remove the target ROAS from campaign 5",
+		},
+		{
+			// The strategy is already what the campaign uses, so the redundant
+			// strategy-only branch would normally drop the operation entirely.
+			name:        "target cpa with the strategy named explicitly",
+			args:        UpdateCampaignArgs{BiddingStrategy: "MAXIMIZE_CONVERSIONS", ClearTargetCPA: true},
+			current:     "MAXIMIZE_CONVERSIONS",
+			wantKey:     "maximizeConversions",
+			wantMask:    "maximizeConversions.targetCpaMicros",
+			wantSummary: "Remove the target CPA from campaign 5",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			useTempState(t)
+			var mutateBody map[string]any
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case strings.HasSuffix(r.URL.Path, "googleAds:search"):
+					_, _ = w.Write([]byte(`{"results":[{"campaign":{"biddingStrategyType":"` + tc.current + `"}}]}`))
+				case strings.HasSuffix(r.URL.Path, "googleAds:mutate"):
+					_ = decodeJSONBody(r, &mutateBody)
+					_, _ = w.Write([]byte(`{"mutateOperationResponses":[{}]}`))
+				}
+			}))
+			defer srv.Close()
+			c := newTestClient(t, srv)
+
+			args := tc.args
+			args.CustomerID = "1"
+			args.CampaignID = "5"
+			preview, err := runUpdateCampaign(t.Context(), c, args)
+			if err != nil {
+				t.Fatalf("preview: %v", err)
+			}
+			// The operator confirms against a summary that names the removal,
+			// not a bare "1 operation(s)".
+			if !strings.Contains(preview.Preview, tc.wantSummary) {
+				t.Errorf("preview = %q, want it to mention %q", preview.Preview, tc.wantSummary)
+			}
+			args.Confirm = preview.Token
+			if _, err := runUpdateCampaign(t.Context(), c, args); err != nil {
+				t.Fatalf("confirm: %v", err)
+			}
+			update, mask := campaignUpdateOp(t, mutateBody)
+			if mask != tc.wantMask {
+				t.Errorf("updateMask = %q, want %q", mask, tc.wantMask)
+			}
+			message, ok := update[tc.wantKey].(map[string]any)
+			if !ok || len(message) != 0 {
+				t.Errorf("update[%s] = %v, want an empty message", tc.wantKey, update[tc.wantKey])
+			}
+		})
+	}
+}
+
+// TestUpdateCampaign_ClearTargetRequiresACompatibleStrategy keeps a clear off a
+// strategy that has no optional target: TARGET_CPA and TARGET_ROAS require
+// theirs, and a portfolio strategy holds its target on the shared resource.
+func TestUpdateCampaign_ClearTargetRequiresACompatibleStrategy(t *testing.T) {
+	tests := []struct {
+		name     string
+		args     UpdateCampaignArgs
+		response string
+		want     string
+	}{
+		{
+			name:     "target cpa campaign",
+			args:     UpdateCampaignArgs{ClearTargetCPA: true},
+			response: `{"results":[{"campaign":{"biddingStrategyType":"TARGET_CPA"}}]}`,
+			want:     "pass bidding_strategy MAXIMIZE_CONVERSIONS",
+		},
+		{
+			name:     "manual cpc campaign",
+			args:     UpdateCampaignArgs{ClearTargetROAS: true},
+			response: `{"results":[{"campaign":{"biddingStrategyType":"MANUAL_CPC"}}]}`,
+			want:     "pass bidding_strategy MAXIMIZE_CONVERSION_VALUE",
+		},
+		{
+			name:     "portfolio campaign",
+			args:     UpdateCampaignArgs{ClearTargetCPA: true},
+			response: `{"results":[{"campaign":{"biddingStrategyType":"MAXIMIZE_CONVERSIONS","biddingStrategy":"customers/1/biddingStrategies/7"}}]}`,
+			want:     "portfolio bidding strategy",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			useTempState(t)
+			var mutateCalls int
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if strings.HasSuffix(r.URL.Path, "googleAds:mutate") {
+					mutateCalls++
+				}
+				_, _ = w.Write([]byte(tc.response))
+			}))
+			defer srv.Close()
+
+			args := tc.args
+			args.CustomerID = "1"
+			args.CampaignID = "5"
+			_, err := runUpdateCampaign(t.Context(), newTestClient(t, srv), args)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want substring %q", err, tc.want)
+			}
+			if mutateCalls != 0 {
+				t.Fatalf("incompatible clear made %d mutate calls", mutateCalls)
+			}
+		})
+	}
+}
+
+func TestUpdateCampaign_RejectsInvalidClearCombinationsBeforeLookup(t *testing.T) {
+	tests := []struct {
+		name string
+		args UpdateCampaignArgs
+		want string
+	}{
+		{
+			"both clears",
+			UpdateCampaignArgs{ClearTargetCPA: true, ClearTargetROAS: true},
+			"cannot be set together",
+		},
+		{
+			"clear alongside the value it removes",
+			UpdateCampaignArgs{ClearTargetCPA: true, TargetCPA: 25},
+			"clear_target_cpa cannot be combined with target_cpa/target_roas",
+		},
+		{
+			"clear alongside the other target",
+			UpdateCampaignArgs{ClearTargetROAS: true, TargetCPA: 25},
+			"clear_target_roas cannot be combined with target_cpa/target_roas",
+		},
+		{
+			"clear with a portfolio strategy",
+			UpdateCampaignArgs{ClearTargetCPA: true, PortfolioStrategyID: "9"},
+			"cannot be set with portfolio_strategy_id",
+		},
+		{
+			"clear with an incompatible explicit strategy",
+			UpdateCampaignArgs{ClearTargetCPA: true, BiddingStrategy: "MAXIMIZE_CONVERSION_VALUE"},
+			"clear_target_cpa applies only to MAXIMIZE_CONVERSIONS",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			useTempState(t)
+			var calls int
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				calls++
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{}`))
+			}))
+			defer srv.Close()
+
+			tc.args.CustomerID = "1"
+			tc.args.CampaignID = "5"
+			_, err := runUpdateCampaign(t.Context(), newTestClient(t, srv), tc.args)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want substring %q", err, tc.want)
+			}
+			if calls != 0 {
+				t.Fatalf("invalid input made %d API calls", calls)
+			}
+		})
+	}
+}
