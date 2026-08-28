@@ -169,7 +169,7 @@ func addGoogleTools(reg *toolRegistrar, client *Client) {
 		runCreateAdGroup)
 
 	addTool(reg, client, "update_ad_group",
-		"Update an ad group's name, CPC bid, and/or ad rotation mode. Returns a preview + confirm token; pass Confirm to apply.",
+		"Update an ad group's name, CPC bid, ad-group-level TargetCpaMicros/TargetROAS (which override the campaign target for that ad group), and/or ad rotation mode. ClearCpcBid, ClearTargetCPA, and ClearTargetROAS remove a value so the ad group inherits again — omitting a number leaves it in place. Returns a preview + confirm token; pass Confirm to apply.",
 		runUpdateAdGroup)
 
 	addTool(reg, client, "draft_responsive_search_ad",

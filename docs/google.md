@@ -207,6 +207,25 @@ has started. `--clear-end-date` writes Google's own "runs indefinitely" value
 (`2037-12-30`), which is what `end_date` holds on a campaign that was never
 given one; it cannot be combined with `--end-date`.
 
+### Ad group bids and targets
+
+`adgroup update` carries the ad group's name, its default CPC bid, its ad
+rotation mode, and its **own** target, which overrides the campaign's for that
+ad group alone:
+
+```bash
+ads google adgroup update --ad-group-id 222 --target-cpa-micros 12500000
+ads google adgroup update --ad-group-id 222 --target-roas 3.5
+
+# Back to inheriting: the campaign target and the ad group default bid apply.
+ads google adgroup update --ad-group-id 222 --clear-target-cpa --clear-cpc-bid
+```
+
+As everywhere else, an omitted number means "leave it alone", so each removal
+has its own flag: `--clear-cpc-bid`, `--clear-target-cpa`, `--clear-target-roas`.
+Unlike a campaign's bidding targets — which are members of one strategy — these
+are independent values on the ad group, so more than one can be cleared at once.
+
 ### Clearing a bidding target
 
 `--target-cpa` / `--target-roas` are optional on `MAXIMIZE_CONVERSIONS` and
