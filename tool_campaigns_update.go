@@ -351,28 +351,34 @@ func resolveCampaignBudgetResource(ctx context.Context, c *Client, customerID, c
 	return "", 0, fmt.Errorf("could not resolve a campaign budget for campaign %s — the campaign may not exist or has no associated budget", campaignID)
 }
 
-// campaignNoEndDate is the value Google Ads gives a campaign that runs
-// indefinitely: end_date defaults to it on create, and setting it back is how
-// an end date is removed. Masking the leaf with no value is not the documented
-// way out, so a clear writes the sentinel the API itself uses.
-const campaignNoEndDate = "2037-12-30"
+// Campaign run dates live in campaign.start_date_time / end_date_time, which
+// take "yyyy-MM-dd HH:mm:ss" in the customer's time zone. v23 has no plain
+// start_date/end_date field. Google's own instruction for a whole-day boundary
+// is to set the time component to 00:00:00 at the start and 23:59:59 at the
+// end, so a bare date supplied here is completed to the right end of its day.
+const (
+	campaignDayStart = " 00:00:00"
+	campaignDayEnd   = " 23:59:59"
+)
 
-// parseCampaignDate validates a campaign start/end date. Google Ads dates are
-// YYYY-MM-DD, and the value is written into a mutation rather than a query, but
-// a typo caught here costs no API round trip — and time.Parse rejects the
-// almost-right dates a length check would let through (2026-13-45).
-func parseCampaignDate(field, value string) (string, error) {
+// parseCampaignDate validates a campaign start/end boundary and returns it in
+// the "yyyy-MM-dd HH:mm:ss" form the API takes. A bare YYYY-MM-DD is completed
+// with dayTime, the whole-day boundary for that end of the range; an explicit
+// time is passed through, because minute granularity is real for the campaign
+// types that support it. A typo caught here costs no API round trip, and
+// time.Parse rejects the almost-right values a length check would let through
+// (2026-13-45).
+func parseCampaignDate(field, value, dayTime string) (string, error) {
 	v := strings.TrimSpace(value)
-	t, err := time.Parse(time.DateOnly, v)
-	if err != nil {
-		return "", fmt.Errorf("%s must be a date in YYYY-MM-DD form, got %q", field, value)
+	// time.Parse accepts non-canonical components (2026-1-5), which would reach
+	// the API in a shape it does not take, so the round trip has to match.
+	if t, err := time.Parse(time.DateTime, v); err == nil && t.Format(time.DateTime) == v {
+		return v, nil
 	}
-	// time.Parse normalises nothing, so a well-formed but non-canonical value
-	// (2026-1-5) would round-trip differently than it was written.
-	if t.Format(time.DateOnly) != v {
-		return "", fmt.Errorf("%s must be a date in YYYY-MM-DD form, got %q", field, value)
+	if t, err := time.Parse(time.DateOnly, v); err == nil && t.Format(time.DateOnly) == v {
+		return v + dayTime, nil
 	}
-	return v, nil
+	return "", fmt.Errorf("%s must be YYYY-MM-DD, or YYYY-MM-DD HH:MM:SS for a campaign type that supports minute granularity, got %q", field, value)
 }
 
 // applyCampaignScheduleUpdate sets the campaign name and run dates on an update
@@ -391,33 +397,33 @@ func applyCampaignScheduleUpdate(args UpdateCampaignArgs, update map[string]any,
 	}
 	var start, end string
 	if args.StartDate != "" {
-		parsed, err := parseCampaignDate("start_date", args.StartDate)
+		parsed, err := parseCampaignDate("start_date", args.StartDate, campaignDayStart)
 		if err != nil {
 			return nil, err
 		}
 		start = parsed
-		update["startDate"] = start
-		*mask = append(*mask, "startDate")
+		update["startDateTime"] = start
+		*mask = append(*mask, "startDateTime")
 		changes = append(changes, "start "+start)
 	}
 	switch {
 	case args.EndDate != "":
-		parsed, err := parseCampaignDate("end_date", args.EndDate)
+		parsed, err := parseCampaignDate("end_date", args.EndDate, campaignDayEnd)
 		if err != nil {
 			return nil, err
 		}
 		end = parsed
-		update["endDate"] = end
-		*mask = append(*mask, "endDate")
+		update["endDateTime"] = end
+		*mask = append(*mask, "endDateTime")
 		changes = append(changes, "end "+end)
 	case args.ClearEndDate:
-		// Google's own "runs indefinitely" value, which is what end_date holds
-		// on a campaign that was never given one.
-		update["endDate"] = campaignNoEndDate
-		*mask = append(*mask, "endDate")
+		// "To set an existing campaign to run indefinitely, clear this field" —
+		// so the leaf is masked and left out of the update, the same shape
+		// every other clear here uses.
+		*mask = append(*mask, "endDateTime")
 		changes = append(changes, "no end date")
 	}
-	// Dates are zero-padded YYYY-MM-DD, so they compare lexically.
+	// Both are zero-padded "yyyy-MM-dd HH:mm:ss", so they compare lexically.
 	if start != "" && end != "" && end < start {
 		return nil, fmt.Errorf("end_date %s is before start_date %s — a campaign cannot finish before it begins", end, start)
 	}
@@ -432,9 +438,11 @@ type UpdateCampaignArgs struct {
 	// Name and the run dates were settable at create time (name) or nowhere at
 	// all (dates); an end date is how a campaign is wound down on a schedule
 	// rather than by someone being present at the right moment (issue #54).
-	Name            string `json:"name,omitempty" jsonschema:"a new name for the campaign"`
-	StartDate       string `json:"start_date,omitempty" jsonschema:"the campaign's first day, YYYY-MM-DD (Google rejects a change once the campaign has started)"`
-	EndDate         string `json:"end_date,omitempty" jsonschema:"the campaign's last day, YYYY-MM-DD"`
+	Name string `json:"name,omitempty" jsonschema:"a new name for the campaign"`
+	// The dates set campaign.start_date_time / end_date_time. A bare date is
+	// completed to the whole-day boundary for its end of the range.
+	StartDate       string `json:"start_date,omitempty" jsonschema:"the campaign's first day as YYYY-MM-DD, or YYYY-MM-DD HH:MM:SS where the campaign type supports minute granularity (Google rejects a change once the campaign has started)"`
+	EndDate         string `json:"end_date,omitempty" jsonschema:"the campaign's last day as YYYY-MM-DD, or YYYY-MM-DD HH:MM:SS where the campaign type supports minute granularity"`
 	ClearEndDate    bool   `json:"clear_end_date,omitempty" jsonschema:"remove the campaign's end date so it runs indefinitely; cannot be combined with end_date"`
 	BiddingStrategy string `json:"bidding_strategy,omitempty" jsonschema:"new standard (campaign-level) bidding strategy, e.g. MAXIMIZE_CONVERSIONS; mutually exclusive with portfolio_strategy_id"`
 	// PortfolioStrategyID attaches the campaign to a shared bidding strategy so
@@ -683,8 +691,8 @@ func init() {
 	f.StringVar(&updateCampaignArgs.CustomerID, "customer-id", "", "Google Ads customer ID (falls back to the configured default)")
 	f.StringVar(&updateCampaignArgs.CampaignID, "campaign-id", "", "campaign ID (required)")
 	f.StringVar(&updateCampaignArgs.Name, "name", "", "new campaign name")
-	f.StringVar(&updateCampaignArgs.StartDate, "start-date", "", "campaign start date, YYYY-MM-DD")
-	f.StringVar(&updateCampaignArgs.EndDate, "end-date", "", "campaign end date, YYYY-MM-DD")
+	f.StringVar(&updateCampaignArgs.StartDate, "start-date", "", "campaign start, YYYY-MM-DD (or YYYY-MM-DD HH:MM:SS)")
+	f.StringVar(&updateCampaignArgs.EndDate, "end-date", "", "campaign end, YYYY-MM-DD (or YYYY-MM-DD HH:MM:SS)")
 	f.BoolVar(&updateCampaignArgs.ClearEndDate, "clear-end-date", false, "remove the campaign's end date so it runs indefinitely")
 	f.StringVar(&updateCampaignArgs.BiddingStrategy, "bidding-strategy", "", "new standard bidding strategy (mutually exclusive with --portfolio-strategy-id)")
 	f.StringVar(&updateCampaignArgs.PortfolioStrategyID, "portfolio-strategy-id", "", "attach the campaign to this portfolio bidding strategy (ID or resource name)")

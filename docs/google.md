@@ -202,10 +202,16 @@ ads google campaign update --campaign-id 111 --end-date 2026-12-31
 ads google campaign update --campaign-id 111 --clear-end-date
 ```
 
-Dates are `YYYY-MM-DD`. Google rejects a `--start-date` change once a campaign
-has started. `--clear-end-date` writes Google's own "runs indefinitely" value
-(`2037-12-30`), which is what `end_date` holds on a campaign that was never
-given one; it cannot be combined with `--end-date`.
+Dates are `YYYY-MM-DD`. They set `campaign.start_date_time` /
+`end_date_time` — v23 has no plain date field — so a bare date is completed to
+the whole-day boundary Google asks for at that end of the range: `00:00:00` for
+the start, `23:59:59` for the end. Campaign types that support minute
+granularity can be given a `YYYY-MM-DD HH:MM:SS` instead, in the account's time
+zone.
+
+Google rejects a `--start-date` change once a campaign has started.
+`--clear-end-date` clears the field, which is how Google says to set a running
+campaign back to indefinite; it cannot be combined with `--end-date`.
 
 ### Ad group bids and targets
 
