@@ -73,11 +73,15 @@ func runCreatePortfolioBidding(ctx context.Context, c *Client, args PortfolioBid
 // UpdateKeywordBidArgs updates a keyword's CPC bid, enforcing the bid-increase
 // guard against the supplied current bid.
 type UpdateKeywordBidArgs struct {
-	CustomerID  string  `json:"customer_id,omitempty" jsonschema:"the Google Ads customer ID that owns the keyword; omit to use the configured default customer"`
-	AdGroupID   string  `json:"ad_group_id" jsonschema:"the ad group ID"`
-	CriterionID string  `json:"criterion_id" jsonschema:"the keyword criterion ID"`
-	CurrentBid  float64 `json:"current_bid" jsonschema:"the current bid in currency units (for the safety check)"`
-	NewBid      float64 `json:"new_bid" jsonschema:"the desired new bid in currency units; required unless clear_bid is set"`
+	CustomerID  string `json:"customer_id,omitempty" jsonschema:"the Google Ads customer ID that owns the keyword; omit to use the configured default customer"`
+	AdGroupID   string `json:"ad_group_id" jsonschema:"the ad group ID"`
+	CriterionID string `json:"criterion_id" jsonschema:"the keyword criterion ID"`
+	// Both numbers are optional in the schema, and which of them is required is
+	// decided by validateKeywordBidChange: a clear names no bid at all, and
+	// current_bid is only ever a fallback baseline. A schema that demanded them
+	// would reject a clear before the handler ever saw it.
+	CurrentBid float64 `json:"current_bid,omitempty" jsonschema:"the current bid in currency units; only used as a fallback baseline for the safety check when the keyword has no explicit bid yet"`
+	NewBid     float64 `json:"new_bid,omitempty" jsonschema:"the desired new bid in currency units; required unless clear_bid is set"`
 	// ClearBid removes the keyword's own bid. Omitting new_bid cannot express
 	// this: every other numeric field in this CLI reads an omitted value as
 	// "leave it alone", and a bid wipe is far too destructive to infer from an
