@@ -482,7 +482,7 @@ func TestUpdateCampaign_RedundantStrategyOnlyPreservesExistingSettings(t *testin
 						return
 					}
 					searchCalls++
-					_, _ = w.Write([]byte(`{"results":[{"campaign":{"biddingStrategyType":"` + tc.current + `"}}]}`))
+					_, _ = w.Write([]byte(`{"results":[{"campaign":{"containsEuPoliticalAdvertising":"DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING","biddingStrategyType":"` + tc.current + `"}}]}`))
 				case strings.HasSuffix(r.URL.Path, "googleAds:mutate"):
 					_ = decodeJSONBody(r, &mutateBody)
 					_, _ = w.Write([]byte(`{"mutateOperationResponses":[{}]}`))
@@ -505,8 +505,8 @@ func TestUpdateCampaign_RedundantStrategyOnlyPreservesExistingSettings(t *testin
 			if _, err := runUpdateCampaign(t.Context(), c, args); err != nil {
 				t.Fatalf("confirm: %v", err)
 			}
-			if searchCalls != 1 {
-				t.Errorf("current-strategy search calls = %d, want 1", searchCalls)
+			if searchCalls != 2 {
+				t.Errorf("strategy and declaration search calls = %d, want 2", searchCalls)
 			}
 			ops, _ := mutateBody["mutateOperations"].([]any)
 			if len(ops) != 1 {
@@ -670,7 +670,7 @@ func TestUpdateCampaign_GeoTargetTypeMasksOnlySuppliedSides(t *testing.T) {
 				switch {
 				case strings.HasSuffix(r.URL.Path, "googleAds:search"):
 					searchCalls++
-					_, _ = w.Write([]byte(`{"results":[]}`))
+					_, _ = w.Write([]byte(`{"results":[{"campaign":{"containsEuPoliticalAdvertising":"DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING"}}]}`))
 				case strings.HasSuffix(r.URL.Path, "googleAds:mutate"):
 					_ = decodeJSONBody(r, &mutateBody)
 					_, _ = w.Write([]byte(`{"mutateOperationResponses":[{}]}`))
@@ -693,9 +693,9 @@ func TestUpdateCampaign_GeoTargetTypeMasksOnlySuppliedSides(t *testing.T) {
 			if _, err := runUpdateCampaign(t.Context(), c, args); err != nil {
 				t.Fatalf("confirm: %v", err)
 			}
-			// A location-options-only update needs no bidding or budget lookup.
-			if searchCalls != 0 {
-				t.Errorf("search calls = %d, want 0", searchCalls)
+			// Location options check the declaration, without a bidding or budget lookup.
+			if searchCalls != 1 {
+				t.Errorf("search calls = %d, want 1", searchCalls)
 			}
 			update, mask := campaignUpdateOp(t, mutateBody)
 			if update["resourceName"] != "customers/1/campaigns/5" {
@@ -1575,6 +1575,14 @@ func TestUpdateCampaign_RemoveTargetConstants(t *testing.T) {
 			searches++
 			var q struct{ Query string }
 			_ = decodeJSONBody(r, &q)
+			if strings.Contains(q.Query, "campaign.contains_eu_political_advertising") {
+				_, _ = w.Write([]byte(`{"results":[{"campaign":{"containsEuPoliticalAdvertising":"DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING"}}]}`))
+				return
+			}
+			if strings.Contains(q.Query, "FROM geo_target_constant") {
+				_, _ = w.Write([]byte(`{"results":[{"geoTargetConstant":{"id":"2840","name":"United States"}}]}`))
+				return
+			}
 			if !strings.Contains(q.Query, "campaign.id = 5") || !strings.Contains(q.Query, "status != 'REMOVED'") {
 				t.Errorf("unsafe lookup: %s", q.Query)
 			}
@@ -1591,7 +1599,7 @@ func TestUpdateCampaign_RemoveTargetConstants(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if mutations != 0 || searches != 1 {
+	if mutations != 0 || searches != 3 {
 		t.Fatalf("preview: searches=%d mutations=%d", searches, mutations)
 	}
 	second, err := runUpdateCampaign(t.Context(), c, UpdateCampaignArgs{Confirm: prev.Token})
@@ -1604,7 +1612,7 @@ func TestUpdateCampaign_RemoveTargetConstants(t *testing.T) {
 	if _, err := runUpdateCampaign(t.Context(), c, UpdateCampaignArgs{Confirm: second.Token}); err != nil {
 		t.Fatal(err)
 	}
-	if mutations != 1 || searches != 1 {
+	if mutations != 1 || searches != 3 {
 		t.Fatalf("confirm: searches=%d mutations=%d", searches, mutations)
 	}
 	ops := body["mutateOperations"].([]any)

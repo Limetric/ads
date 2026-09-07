@@ -24,6 +24,7 @@ type CreateAppCampaignArgs struct {
 	GeoTargetIDs       []string `json:"geo_target_ids,omitempty" jsonschema:"optional geo target constant IDs"`
 	LanguageIDs        []string `json:"language_ids,omitempty" jsonschema:"optional language constant IDs"`
 	AdGroupName        string   `json:"ad_group_name,omitempty" jsonschema:"the ad group name; defaults to Ad group 1"`
+	EUPoliticalAds     string   `json:"eu_political_ads,omitempty" jsonschema:"EU political advertising declaration: does-not-contain (default) or contains; API enum values also accepted"`
 	Status             string   `json:"status,omitempty" jsonschema:"ENABLED or PAUSED; defaults to PAUSED"`
 	Confirm            string   `json:"confirm,omitempty" jsonschema:"a confirm token from a previous preview; omit to preview"`
 }
@@ -82,6 +83,14 @@ func runCreateAppCampaign(ctx context.Context, c *Client, args CreateAppCampaign
 			return WriteResult{}, fmt.Errorf("asset resource names cannot be empty")
 		}
 	}
+	euPoliticalAds, err := parseEUPoliticalAds(args.EUPoliticalAds)
+	if err != nil {
+		return WriteResult{}, err
+	}
+	if euPoliticalAds == "" {
+		euPoliticalAds = "DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING"
+	}
+
 	status, err := parseCreateStatus(args.Status)
 	if err != nil {
 		return WriteResult{}, err
@@ -146,7 +155,7 @@ func runCreateAppCampaign(ctx context.Context, c *Client, args CreateAppCampaign
 			"appStore":                "GOOGLE_APP_STORE",
 			"biddingStrategyGoalType": "OPTIMIZE_INSTALLS_TARGET_INSTALL_COST",
 		},
-		"containsEuPoliticalAdvertising": "DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING",
+		"containsEuPoliticalAdvertising": euPoliticalAds,
 	}}})
 
 	for _, geoID := range args.GeoTargetIDs {
@@ -183,6 +192,7 @@ func runCreateAppCampaign(ctx context.Context, c *Client, args CreateAppCampaign
 		"Create App campaign %q for %s (budget %.2f/day, target CPI %.2f, status %s, %d ops)",
 		args.CampaignName, args.AppID, args.DailyBudget, args.TargetCPI, status, len(ops),
 	)
+	summary += fmt.Sprintf("; EU political advertising: %s", euPoliticalAds)
 	result, err := previewMutate(tool, cid, summary, ops)
 	if err != nil {
 		return WriteResult{}, err
@@ -223,6 +233,7 @@ func init() {
 	f.StringArrayVar(&createAppCampaignArgs.GeoTargetIDs, "geo-target-id", nil, "geo target constant ID (repeatable)")
 	f.StringArrayVar(&createAppCampaignArgs.LanguageIDs, "language-id", nil, "language constant ID (repeatable)")
 	f.StringVar(&createAppCampaignArgs.AdGroupName, "ad-group-name", "", "ad group name (defaults to Ad group 1)")
+	f.StringVar(&createAppCampaignArgs.EUPoliticalAds, "eu-political-ads", "", "EU political advertising declaration: does-not-contain (default) or contains")
 	f.StringVar(&createAppCampaignArgs.Status, "status", "", "ENABLED or PAUSED (default)")
 	f.StringVar(&createAppCampaignArgs.Confirm, "confirm", "", "confirm token from a previous preview")
 	_ = campaignCreateAppCmd.MarkFlagRequired("name")

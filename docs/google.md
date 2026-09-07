@@ -166,6 +166,42 @@ geo/language targeting, and the campaign's **location options** — Google's
 Performance Max create commands do not take them; set them afterwards with
 `campaign update`.
 
+### EU political advertising declaration
+
+`campaign create`, `campaign create-app`, and `campaign update` accept
+`--eu-political-ads does-not-contain|contains` (MCP: `eu_political_ads`). The full
+API enum names `DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING` and
+`CONTAINS_EU_POLITICAL_ADVERTISING` are also accepted. Create commands default to
+`does-not-contain`; set `contains` explicitly when that describes the campaign.
+The preview shows the declaration being submitted. Omitting this option on an
+update preserves the existing declaration.
+
+Google requires a **per-campaign** declaration before changing location,
+proximity, or location-group criteria, even when targeting outside the EU.
+An account-level declaration does not guarantee that every campaign has one.
+`campaign update` checks the declaration before previewing geo changes. For an
+undeclared campaign, first set and confirm the declaration on its own, then
+preview and confirm the targeting change. Google exempts declaration-only updates
+from its undeclared-account mutation block; combining the repair with other
+changes loses that exemption. See [Google’s EU-PAR API notes](https://developers.google.com/google-ads/api/docs/api-policy/eu-par).
+
+```bash
+# Choose the value that accurately describes this campaign.
+ads google campaign update --campaign-id 111 --eu-political-ads does-not-contain
+ads confirm <declaration-token>
+
+ads google campaign update --campaign-id 111 --geo-target-id 20835
+ads confirm <targeting-token>
+```
+
+To inspect declarations, query
+`campaign.id, campaign.name, campaign.contains_eu_political_advertising` from
+`campaign`. An omitted field or `UNSPECIFIED` means undeclared; an absent field
+in a GAQL result does not mean the query is malformed.
+
+If an API mutation reports partial failure, re-read the campaign and its
+criteria: some operations may have applied even though others failed.
+
 ### Targeting and excluding locations
 
 `--geo-target-id` targets a location; `--exclude-geo-target-id` excludes one.

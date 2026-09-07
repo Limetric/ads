@@ -433,8 +433,9 @@ func applyCampaignScheduleUpdate(args UpdateCampaignArgs, update map[string]any,
 // UpdateCampaignArgs updates an existing campaign's settings. Only the provided
 // fields change; at least one change must be specified.
 type UpdateCampaignArgs struct {
-	CustomerID string `json:"customer_id,omitempty" jsonschema:"the Google Ads customer ID that owns the campaign; omit to use the configured default customer"`
-	CampaignID string `json:"campaign_id" jsonschema:"the campaign ID to update"`
+	EUPoliticalAds string `json:"eu_political_ads,omitempty" jsonschema:"per-campaign EU political ads declaration: does-not-contain or contains; omit to leave unchanged; declare and confirm separately before changing geo targeting on an undeclared campaign"`
+	CustomerID     string `json:"customer_id,omitempty" jsonschema:"the Google Ads customer ID that owns the campaign; omit to use the configured default customer"`
+	CampaignID     string `json:"campaign_id" jsonschema:"the campaign ID to update"`
 	// Name and the run dates were settable at create time (name) or nowhere at
 	// all (dates); an end date is how a campaign is wound down on a schedule
 	// rather than by someone being present at the right moment (issue #54).
@@ -495,6 +496,10 @@ func runUpdateCampaign(ctx context.Context, c *Client, args UpdateCampaignArgs) 
 		return WriteResult{}, err
 	}
 	if err := validateCampaignTargetRemovals(args); err != nil {
+		return WriteResult{}, err
+	}
+	declaration, err := parseEUPoliticalAds(args.EUPoliticalAds)
+	if err != nil {
 		return WriteResult{}, err
 	}
 	campaignResource := fmt.Sprintf("customers/%s/campaigns/%s", cid, campaignID)
@@ -667,6 +672,11 @@ func runUpdateCampaign(ctx context.Context, c *Client, args UpdateCampaignArgs) 
 		return WriteResult{}, err
 	}
 	changes = append(changes, scheduleChanges...)
+	if declaration != "" {
+		update["containsEuPoliticalAdvertising"] = declaration
+		mask = append(mask, "containsEuPoliticalAdvertising")
+		changes = append(changes, "EU political ads: "+declaration)
+	}
 	if dsa := dsaCampaignSummary(dsaSetting); dsa != "" {
 		changes = append(changes, dsa)
 	}
@@ -680,6 +690,11 @@ func runUpdateCampaign(ctx context.Context, c *Client, args UpdateCampaignArgs) 
 	}
 	if err := numericIDs("language_id", args.LanguageIDs); err != nil {
 		return WriteResult{}, err
+	}
+	if len(args.GeoTargetIDs) > 0 || len(args.ExcludeGeoTargetIDs) > 0 || geoSetting != nil {
+		if err := preflightCampaignPoliticalAds(ctx, c, cid, campaignID); err != nil {
+			return WriteResult{}, toolError(tool, err)
+		}
 	}
 	geoIDs := append(append([]string{}, args.GeoTargetIDs...), args.ExcludeGeoTargetIDs...)
 	geoNames := campaignTargetNames(ctx, c, cid, geoIDs, true)
@@ -770,6 +785,7 @@ var campaignUpdateCmd = &cobra.Command{
 
 func init() {
 	f := campaignUpdateCmd.Flags()
+	f.StringVar(&updateCampaignArgs.EUPoliticalAds, "eu-political-ads", "", "per-campaign declaration: does-not-contain or contains (confirm separately before geo changes on an undeclared campaign)")
 	f.StringVar(&updateCampaignArgs.CustomerID, "customer-id", "", "Google Ads customer ID (falls back to the configured default)")
 	f.StringVar(&updateCampaignArgs.CampaignID, "campaign-id", "", "campaign ID (required)")
 	f.StringVar(&updateCampaignArgs.Name, "name", "", "new campaign name")
