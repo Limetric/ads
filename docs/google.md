@@ -191,6 +191,14 @@ Both flags are **additive**: each call adds to what the campaign already
 carries. To take a location back off, see
 [campaign criteria](#campaign-criteria-geo-language-ad-schedule) below.
 
+Update previews name each location addition or exclusion, including its canonical
+name and ID, and each language addition. Existing location targets are retained.
+If a constant name cannot be resolved, the preview shows its ID with “name
+unavailable”. Budget previews include the current and requested amounts in account
+currency units and the budget resource; bidding and location-option changes name
+the requested values, including when combined with a target clear or portfolio
+attachment.
+
 ### Renaming a campaign and setting its run dates
 
 ```bash

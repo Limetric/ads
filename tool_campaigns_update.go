@@ -536,6 +536,7 @@ func runUpdateCampaign(ctx context.Context, c *Client, args UpdateCampaignArgs) 
 		return WriteResult{}, err
 	}
 	var ops []any
+	var changes []string
 	doubleConfirm := false
 
 	// Budget update — resolve the real budget resource first.
@@ -550,6 +551,11 @@ func runUpdateCampaign(ctx context.Context, c *Client, args UpdateCampaignArgs) 
 		if err != nil {
 			return WriteResult{}, toolError(tool, err)
 		}
+		currentBudget := "unknown"
+		if currentMicros > 0 {
+			currentBudget = fmt.Sprintf("%g", float64(currentMicros)/1_000_000)
+		}
+		changes = append(changes, fmt.Sprintf("daily budget %s → %g currency units (%s)", currentBudget, float64(dollarsToMicros(args.DailyBudget))/1_000_000, budgetResource))
 		// Budget increases over 50% take a second confirmation (issue #12).
 		if currentMicros > 0 {
 			cur := float64(currentMicros) / 1_000_000.0
@@ -611,6 +617,17 @@ func runUpdateCampaign(ctx context.Context, c *Client, args UpdateCampaignArgs) 
 			return WriteResult{}, err
 		}
 	}
+	if strategy != "" && clearTarget == nil {
+		if args.BiddingStrategy != "" {
+			changes = append(changes, "set standard bidding strategy "+canonicalBiddingStrategy(strategy))
+		}
+		if args.TargetCPA != 0 {
+			changes = append(changes, fmt.Sprintf("set target CPA to %g currency units", float64(dollarsToMicros(args.TargetCPA))/1_000_000))
+		}
+		if args.TargetROAS != 0 {
+			changes = append(changes, fmt.Sprintf("set target ROAS to %g (ratio)", args.TargetROAS))
+		}
+	}
 	if portfolioID != "" {
 		// Resolved rather than assembled from the campaign's customer ID: a
 		// manager-owned strategy's resource name carries the manager's ID, and
@@ -629,15 +646,22 @@ func runUpdateCampaign(ctx context.Context, c *Client, args UpdateCampaignArgs) 
 	if geoSetting != nil {
 		update["geoTargetTypeSetting"] = geoSetting
 		mask = append(mask, geoMask...)
+		if value, ok := geoSetting["positiveGeoTargetType"]; ok {
+			changes = append(changes, fmt.Sprintf("set positive location option to %s", value))
+		}
+		if value, ok := geoSetting["negativeGeoTargetType"]; ok {
+			changes = append(changes, fmt.Sprintf("set negative location option to %s", value))
+		}
 	}
 	if dsaSetting != nil {
 		update["dynamicSearchAdsSetting"] = dsaSetting
 		mask = append(mask, dsaMask...)
 	}
-	changes, err := applyCampaignScheduleUpdate(args, update, &mask)
+	scheduleChanges, err := applyCampaignScheduleUpdate(args, update, &mask)
 	if err != nil {
 		return WriteResult{}, err
 	}
+	changes = append(changes, scheduleChanges...)
 	if dsa := dsaCampaignSummary(dsaSetting); dsa != "" {
 		changes = append(changes, dsa)
 	}
@@ -652,13 +676,19 @@ func runUpdateCampaign(ctx context.Context, c *Client, args UpdateCampaignArgs) 
 	if err := numericIDs("language_id", args.LanguageIDs); err != nil {
 		return WriteResult{}, err
 	}
+	geoIDs := append(append([]string{}, args.GeoTargetIDs...), args.ExcludeGeoTargetIDs...)
+	geoNames := campaignTargetNames(ctx, c, cid, geoIDs, true)
+	languageNames := campaignTargetNames(ctx, c, cid, args.LanguageIDs, false)
 	for _, geoID := range args.GeoTargetIDs {
+		changes = append(changes, "add location target "+campaignTargetLabel(geoID, geoNames)+" (existing targets retained)")
 		ops = append(ops, campaignLocationCriterion(campaignResource, geoID, false))
 	}
 	for _, geoID := range args.ExcludeGeoTargetIDs {
+		changes = append(changes, "add location exclusion "+campaignTargetLabel(geoID, geoNames))
 		ops = append(ops, campaignLocationCriterion(campaignResource, geoID, true))
 	}
 	for _, langID := range args.LanguageIDs {
+		changes = append(changes, "add language target "+campaignTargetLabel(langID, languageNames))
 		ops = append(ops, campaignLanguageCriterion(campaignResource, langID))
 	}
 
