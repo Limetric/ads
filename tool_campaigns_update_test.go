@@ -473,6 +473,14 @@ func TestUpdateCampaign_RedundantStrategyOnlyPreservesExistingSettings(t *testin
 				w.Header().Set("Content-Type", "application/json")
 				switch {
 				case strings.HasSuffix(r.URL.Path, "googleAds:search"):
+					var body struct {
+						Query string `json:"query"`
+					}
+					_ = decodeJSONBody(r, &body)
+					if strings.Contains(body.Query, "FROM geo_target_constant") {
+						_, _ = w.Write([]byte(`{"results":[{"geoTargetConstant":{"id":"2840","canonicalName":"United States"}}]}`))
+						return
+					}
 					searchCalls++
 					_, _ = w.Write([]byte(`{"results":[{"campaign":{"biddingStrategyType":"` + tc.current + `"}}]}`))
 				case strings.HasSuffix(r.URL.Path, "googleAds:mutate"):
