@@ -95,8 +95,75 @@ func runCampaignCriteria(ctx context.Context, c *Client, args CampaignCriteriaAr
 		return CampaignCriteriaResult{}, toolError(tool, err)
 	}
 	rows = enrichRemoveEntityIDs(rows)
-	fields := append(parseSelectFields(query), removeEntityIDField)
+	rows, err = enrichCriterionConstants(ctx, c, cid, rows)
+	if err != nil {
+		return CampaignCriteriaResult{}, toolError(tool, err)
+	}
+	fields := append(parseSelectFields(query), "constant_id", "constant_name", removeEntityIDField)
 	return CampaignCriteriaResult{Criteria: rows, TotalCount: len(rows), selectFields: fields}, nil
+}
+
+// enrichCriterionConstants resolves the constants in batches, avoiding a query
+// per criterion. Unresolved constants retain their ID and an empty name so
+// callers can still inspect and remove the criterion.
+func enrichCriterionConstants(ctx context.Context, c *Client, cid string, rows []json.RawMessage) ([]json.RawMessage, error) {
+	for _, constant := range []struct {
+		field, resource, prefix string
+	}{
+		{"campaign_criterion.location.geo_target_constant", "geo_target_constant", "geoTargetConstants/"},
+		{"campaign_criterion.language.language_constant", "language_constant", "languageConstants/"},
+	} {
+		ids := []string{}
+		rowIDs := make(map[int]string)
+		seen := make(map[string]bool)
+		for i, raw := range rows {
+			row, ok := decodeRow(raw)
+			if !ok {
+				continue
+			}
+			resource := resolveField(row, constant.field)
+			if !strings.HasPrefix(resource, constant.prefix) {
+				continue
+			}
+			id, err := numericID("constant_id", strings.TrimPrefix(resource, constant.prefix))
+			if err != nil {
+				return nil, fmt.Errorf("resolve %s %q: %w", constant.resource, resource, err)
+			}
+			rowIDs[i] = id
+			if !seen[id] {
+				ids = append(ids, id)
+				seen[id] = true
+			}
+		}
+		names := make(map[string]string)
+		const batchSize = 1000
+		for start := 0; start < len(ids); start += batchSize {
+			batch := ids[start:min(start+batchSize, len(ids))]
+			query := fmt.Sprintf("SELECT %s.id, %s.name FROM %s WHERE %s.id IN (%s)", constant.resource, constant.resource, constant.resource, constant.resource, strings.Join(batch, ", "))
+			constants, err := c.Search(ctx, cid, query)
+			if err != nil {
+				return nil, fmt.Errorf("resolve %s names: %w", constant.resource, err)
+			}
+			for _, raw := range constants {
+				row, ok := decodeRow(raw)
+				if ok {
+					names[resolveField(row, constant.resource+".id")] = resolveField(row, constant.resource+".name")
+				}
+			}
+		}
+		for i, id := range rowIDs {
+			decoded, _ := decodeRow(rows[i])
+			row := decoded.(map[string]any)
+			row["constant_id"] = id
+			row["constant_name"] = names[id]
+			enriched, err := json.Marshal(row)
+			if err != nil {
+				return nil, fmt.Errorf("encode resolved criterion: %w", err)
+			}
+			rows[i] = enriched
+		}
+	}
+	return rows, nil
 }
 
 // removeEntityIDField is the synthetic column enrichRemoveEntityIDs adds, and
@@ -146,7 +213,7 @@ var (
 
 var campaignCriteriaCmd = &cobra.Command{
 	Use:   "criteria",
-	Short: "List a campaign's criteria (geo, language, ad schedule, negatives) with the IDs remove takes",
+	Short: "List campaign criteria with geo/language names and the IDs remove takes",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		client, err := newGoogleClient(cmd.Context())

@@ -1556,3 +1556,111 @@ func TestUpdateCampaign_ClearTargetAlonePreviewIsUnchanged(t *testing.T) {
 		t.Errorf("a lone clear should carry no other-changes suffix, got %q", preview.Preview)
 	}
 }
+
+func TestUpdateCampaign_RemoveTargetConstants(t *testing.T) {
+	useTempState(t)
+	searches, mutations := 0, 0
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "googleAds:search") {
+			searches++
+			var q struct{ Query string }
+			_ = decodeJSONBody(r, &q)
+			if !strings.Contains(q.Query, "campaign.id = 5") || !strings.Contains(q.Query, "status != 'REMOVED'") {
+				t.Errorf("unsafe lookup: %s", q.Query)
+			}
+			_, _ = w.Write([]byte(`{"results":[{"campaignCriterion":{"criterionId":"77","negative":true,"location":{"geoTargetConstant":"geoTargetConstants/2608"}}},{"campaignCriterion":{"criterionId":"88","language":{"languageConstant":"languageConstants/1000"}}}]}`))
+		} else {
+			mutations++
+			_ = decodeJSONBody(r, &body)
+			_, _ = w.Write([]byte(`{"results":[{}]}`))
+		}
+	}))
+	defer srv.Close()
+	c := newTestClient(t, srv)
+	prev, err := runUpdateCampaign(t.Context(), c, UpdateCampaignArgs{CustomerID: "1", CampaignID: "5", GeoTargetIDs: []string{"2840"}, RemoveGeoTargetIDs: []string{"2608", "2608"}, RemoveLanguageIDs: []string{"1000"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mutations != 0 || searches != 1 {
+		t.Fatalf("preview: searches=%d mutations=%d", searches, mutations)
+	}
+	second, err := runUpdateCampaign(t.Context(), c, UpdateCampaignArgs{Confirm: prev.Token})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mutations != 0 || second.Token == "" {
+		t.Fatalf("first confirm mutated or did not return token: %+v", second)
+	}
+	if _, err := runUpdateCampaign(t.Context(), c, UpdateCampaignArgs{Confirm: second.Token}); err != nil {
+		t.Fatal(err)
+	}
+	if mutations != 1 || searches != 1 {
+		t.Fatalf("confirm: searches=%d mutations=%d", searches, mutations)
+	}
+	ops := body["mutateOperations"].([]any)
+	if len(ops) != 3 {
+		t.Fatalf("operations: %v", ops)
+	}
+	for i, want := range []string{"customers/1/campaignCriteria/5~77", "customers/1/campaignCriteria/5~88"} {
+		got := ops[i+1].(map[string]any)["campaignCriterionOperation"].(map[string]any)["remove"]
+		if got != want {
+			t.Errorf("remove = %v, want %s", got, want)
+		}
+	}
+}
+
+func TestUpdateCampaign_RemoveTargetValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args UpdateCampaignArgs
+		want string
+	}{
+		{"invalid geo", UpdateCampaignArgs{RemoveGeoTargetIDs: []string{"abc"}}, "plain numeric"},
+		{"invalid language", UpdateCampaignArgs{RemoveLanguageIDs: []string{"1 OR 1"}}, "plain numeric"},
+		{"geo overlap", UpdateCampaignArgs{GeoTargetIDs: []string{"2608"}, RemoveGeoTargetIDs: []string{"2608"}}, "added and removed"},
+		{"excluded overlap", UpdateCampaignArgs{ExcludeGeoTargetIDs: []string{"2608"}, RemoveGeoTargetIDs: []string{"2608"}}, "added and removed"},
+		{"language overlap", UpdateCampaignArgs{LanguageIDs: []string{"1000"}, RemoveLanguageIDs: []string{"1000"}}, "added and removed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			useTempState(t)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { t.Error("invalid input reached API") }))
+			defer srv.Close()
+			tc.args.CustomerID = "1"
+			tc.args.CampaignID = "5"
+			if _, err := runUpdateCampaign(t.Context(), newTestClient(t, srv), tc.args); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v", err)
+			}
+		})
+	}
+}
+
+func TestUpdateCampaign_RemoveTargetLookupFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name, rows, want string
+		status           int
+	}{
+		{"missing", `{"results":[]}`, "no current criterion", 200},
+		{"partial match", `{"results":[{"campaignCriterion":{"criterionId":"77","location":{"geoTargetConstant":"geoTargetConstants/2608"}}}]}`, "no current criterion", 200},
+		{"invalid criterion", `{"results":[{"campaignCriterion":{"location":{"geoTargetConstant":"geoTargetConstants/2608"}}}]}`, "criterion_id", 200},
+		{"API failure", `{"error":{"message":"lookup denied"}}`, "look up campaign targeting", 403},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			useTempState(t)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if !strings.HasSuffix(r.URL.Path, "googleAds:search") {
+					t.Error("lookup failure mutated")
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.rows))
+			}))
+			defer srv.Close()
+			res, err := runUpdateCampaign(t.Context(), newTestClient(t, srv), UpdateCampaignArgs{CustomerID: "1", CampaignID: "5", RemoveGeoTargetIDs: []string{"2608"}, RemoveLanguageIDs: []string{"1000"}})
+			if err == nil || !strings.Contains(err.Error(), tc.want) || res.Token != "" {
+				t.Fatalf("result=%+v error=%v", res, err)
+			}
+		})
+	}
+}

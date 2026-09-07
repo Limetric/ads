@@ -12,7 +12,7 @@ import (
 )
 
 // This file updates a campaign's budget, bidding strategy, and location
-// options, and can add geo/language targeting. A budget change targets the
+// options, and can add or remove geo/language targeting. A budget change targets the
 // campaign's budget resource (a distinct ID), which is resolved from the API
 // first.
 
@@ -461,6 +461,8 @@ type UpdateCampaignArgs struct {
 	// negative set. negative_geo_target_type configures how they match.
 	ExcludeGeoTargetIDs []string `json:"exclude_geo_target_ids,omitempty" jsonschema:"geo target constant IDs to add as EXCLUDED locations; how they match is set by negative_geo_target_type"`
 	LanguageIDs         []string `json:"language_ids,omitempty" jsonschema:"language constant IDs to add"`
+	RemoveGeoTargetIDs  []string `json:"remove_geo_target_ids,omitempty" jsonschema:"geo target constant IDs to remove from this campaign, including excluded locations"`
+	RemoveLanguageIDs   []string `json:"remove_language_ids,omitempty" jsonschema:"language constant IDs to remove from this campaign"`
 	// Location options — how targeted/excluded locations are matched. Each
 	// side is left untouched when omitted.
 	PositiveGeoTargetType string `json:"positive_geo_target_type,omitempty" jsonschema:"how targeted locations are matched: PRESENCE_OR_INTEREST or PRESENCE for people in the location only"`
@@ -490,6 +492,9 @@ func runUpdateCampaign(ctx context.Context, c *Client, args UpdateCampaignArgs) 
 	}
 	campaignID, err := numericID("campaign_id", args.CampaignID)
 	if err != nil {
+		return WriteResult{}, err
+	}
+	if err := validateCampaignTargetRemovals(args); err != nil {
 		return WriteResult{}, err
 	}
 	campaignResource := fmt.Sprintf("customers/%s/campaigns/%s", cid, campaignID)
@@ -662,6 +667,15 @@ func runUpdateCampaign(ctx context.Context, c *Client, args UpdateCampaignArgs) 
 		ops = append(ops, campaignLanguageCriterion(campaignResource, langID))
 	}
 
+	removals, err := resolveCampaignTargetRemovals(ctx, c, cid, campaignID, args)
+	if err != nil {
+		return WriteResult{}, toolError(tool, err)
+	}
+	ops = append(ops, removals...)
+	if len(removals) > 0 {
+		doubleConfirm = true
+		changes = append(changes, fmt.Sprintf("remove %d geo/language criterion(s)", len(removals)))
+	}
 	if len(ops) == 0 {
 		return WriteResult{}, fmt.Errorf("no changes specified for campaign update")
 	}
@@ -741,6 +755,8 @@ func init() {
 	f.Float64Var(&updateCampaignArgs.DailyBudget, "daily-budget", 0, "new daily budget in currency units")
 	f.StringArrayVar(&updateCampaignArgs.GeoTargetIDs, "geo-target-id", nil, "geo target constant ID to target (repeatable)")
 	f.StringArrayVar(&updateCampaignArgs.ExcludeGeoTargetIDs, "exclude-geo-target-id", nil, "geo target constant ID to exclude (repeatable)")
+	f.StringArrayVar(&updateCampaignArgs.RemoveGeoTargetIDs, "remove-geo-target-id", nil, "geo target constant ID to remove, including exclusions (repeatable)")
+	f.StringArrayVar(&updateCampaignArgs.RemoveLanguageIDs, "remove-language-id", nil, "language constant ID to remove (repeatable)")
 	f.StringArrayVar(&updateCampaignArgs.LanguageIDs, "language-id", nil, "language constant ID to add (repeatable)")
 	f.StringVar(&updateCampaignArgs.PositiveGeoTargetType, "positive-geo-target-type", "", "location option for targeted locations: PRESENCE_OR_INTEREST or PRESENCE")
 	f.StringVar(&updateCampaignArgs.NegativeGeoTargetType, "negative-geo-target-type", "", "location option for excluded locations: PRESENCE (recommended) or PRESENCE_OR_INTEREST")
@@ -751,4 +767,92 @@ func init() {
 	_ = campaignUpdateCmd.MarkFlagRequired("campaign-id")
 
 	campaignCmd.AddCommand(campaignUpdateCmd)
+}
+
+// Validate before lookups: adding and removing the same constant has no
+// unambiguous final intent, even when one addition is an exclusion.
+func validateCampaignTargetRemovals(args UpdateCampaignArgs) error {
+	for _, group := range []struct {
+		field       string
+		remove, add []string
+	}{
+		{"remove_geo_target_id", args.RemoveGeoTargetIDs, append(append([]string{}, args.GeoTargetIDs...), args.ExcludeGeoTargetIDs...)},
+		{"remove_language_id", args.RemoveLanguageIDs, args.LanguageIDs},
+	} {
+		if err := numericIDs(group.field, group.remove); err != nil {
+			return err
+		}
+		for _, id := range group.remove {
+			for _, added := range group.add {
+				if strings.TrimLeft(id, "0") == strings.TrimLeft(added, "0") {
+					return fmt.Errorf("%s %s cannot be added and removed together — pass it on only one side", group.field, id)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// One lookup resolves constants to the actual criterion IDs. Confirm uses the
+// staged operations, never a fresh lookup that could change the removal set.
+func resolveCampaignTargetRemovals(ctx context.Context, c *Client, cid, campaignID string, args UpdateCampaignArgs) ([]any, error) {
+	if len(args.RemoveGeoTargetIDs)+len(args.RemoveLanguageIDs) == 0 {
+		return nil, nil
+	}
+	requested := make(map[string]bool)
+	var order []string
+	for _, group := range []struct {
+		prefix string
+		ids    []string
+	}{
+		{"geoTargetConstants/", args.RemoveGeoTargetIDs},
+		{"languageConstants/", args.RemoveLanguageIDs},
+	} {
+		for _, id := range group.ids {
+			id = strings.TrimLeft(id, "0")
+			if id == "" {
+				id = "0"
+			}
+			key := group.prefix + id
+			if _, exists := requested[key]; !exists {
+				order = append(order, key)
+				requested[key] = false
+			}
+		}
+	}
+	query := fmt.Sprintf("SELECT campaign_criterion.criterion_id, campaign_criterion.location.geo_target_constant, campaign_criterion.language.language_constant FROM campaign_criterion WHERE campaign.id = %s AND campaign_criterion.status != 'REMOVED' AND campaign_criterion.type IN ('LOCATION', 'LANGUAGE')", campaignID)
+	rows, err := c.Search(ctx, cid, query)
+	if err != nil {
+		return nil, fmt.Errorf("look up campaign targeting: %w", err)
+	}
+	var ops []any
+	seen := make(map[string]bool)
+	for _, raw := range rows {
+		row, ok := decodeRow(raw)
+		if !ok {
+			return nil, fmt.Errorf("cannot decode campaign targeting — retry the lookup")
+		}
+		for _, field := range []string{"campaign_criterion.location.geo_target_constant", "campaign_criterion.language.language_constant"} {
+			key := resolveField(row, field)
+			if _, wanted := requested[key]; !wanted {
+				continue
+			}
+			id, err := numericID("criterion_id returned by Google", resolveField(row, "campaign_criterion.criterion_id"))
+			if err != nil {
+				return nil, err
+			}
+			requested[key] = true
+			resource := fmt.Sprintf("customers/%s/campaignCriteria/%s~%s", cid, campaignID, id)
+			if !seen[resource] {
+				ops = append(ops, map[string]any{"campaignCriterionOperation": map[string]any{"remove": resource}})
+				seen[resource] = true
+			}
+		}
+	}
+	for _, key := range order {
+		if !requested[key] {
+			return nil, fmt.Errorf("campaign %s has no current criterion for %s — inspect campaign criteria before removing it", campaignID, key)
+		}
+	}
+	return ops, nil
 }
