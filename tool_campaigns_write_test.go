@@ -485,3 +485,52 @@ func TestDraftCampaign_DSARequiresBothDomainAndLanguage(t *testing.T) {
 		}
 	}
 }
+
+func TestDraftCampaign_EUPoliticalAds(t *testing.T) {
+	for _, tt := range []struct{ name, input, want string }{
+		{"default", "", "DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING"},
+		{"does not contain", "does-not-contain", "DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING"},
+		{"contains", "contains", "CONTAINS_EU_POLITICAL_ADVERTISING"},
+		{"invalid", "maybe", ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			useTempState(t)
+			srv, cap := mutateServer(t)
+			defer srv.Close()
+			c := newTestClient(t, srv)
+			args := DraftCampaignArgs{CustomerID: "1", CampaignName: "Political declaration", DailyBudget: 10, BiddingStrategy: "MAXIMIZE_CONVERSIONS", AdGroupName: "ag"}
+			args.EUPoliticalAds = tt.input
+			prev, err := runDraftCampaign(t.Context(), c, args)
+			if tt.want == "" {
+				if err == nil || !strings.Contains(err.Error(), "eu_political_ads") {
+					t.Fatalf("expected declaration validation error, got %v", err)
+				}
+				if len(cap.lastOps()) != 0 || prev.Token != "" {
+					t.Fatal("invalid declaration must not stage or apply a mutation")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(prev.Preview, tt.want) {
+				t.Errorf("preview does not disclose declaration %s: %s", tt.want, prev.Preview)
+			}
+			if len(cap.lastOps()) != 0 {
+				t.Fatal("preview mutated the campaign")
+			}
+			args.Confirm = prev.Token
+			if _, err := runDraftCampaign(t.Context(), c, args); err != nil {
+				t.Fatal(err)
+			}
+			ops := cap.lastOps()
+			if len(ops) < 2 {
+				t.Fatalf("missing campaign operation: %v", ops)
+			}
+			campaign := opCreate(t, ops[1].(map[string]any), "campaignOperation")
+			if campaign["containsEuPoliticalAdvertising"] != tt.want {
+				t.Errorf("declaration = %v; want %s", campaign["containsEuPoliticalAdvertising"], tt.want)
+			}
+		})
+	}
+}

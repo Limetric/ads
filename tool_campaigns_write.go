@@ -155,6 +155,7 @@ type DraftCampaignArgs struct {
 	DSADomain              string `json:"dsa_domain,omitempty" jsonschema:"make this a Dynamic Search Ads campaign targeting this domain, e.g. example.com; requires dsa_language_code"`
 	DSALanguageCode        string `json:"dsa_language_code,omitempty" jsonschema:"the language of the DSA domain, e.g. en; required with dsa_domain"`
 	DSAUseSuppliedURLsOnly bool   `json:"dsa_use_supplied_urls_only,omitempty" jsonschema:"serve only URLs supplied by page feeds rather than Google's crawl of the domain"`
+	EUPoliticalAds         string `json:"eu_political_ads,omitempty" jsonschema:"EU political advertising declaration: does-not-contain (default) or contains; API enum values also accepted"`
 	Status                 string `json:"status,omitempty" jsonschema:"ENABLED or PAUSED; defaults to PAUSED"`
 	Confirm                string `json:"confirm,omitempty" jsonschema:"a confirm token from a previous preview; omit to preview"`
 }
@@ -196,6 +197,14 @@ func runDraftCampaign(ctx context.Context, c *Client, args DraftCampaignArgs) (W
 			return WriteResult{}, toolError(tool, err)
 		}
 	}
+	euPoliticalAds, err := parseEUPoliticalAds(args.EUPoliticalAds)
+	if err != nil {
+		return WriteResult{}, err
+	}
+	if euPoliticalAds == "" {
+		euPoliticalAds = "DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING"
+	}
+
 	status, err := parseCreateStatus(args.Status)
 	if err != nil {
 		return WriteResult{}, err
@@ -262,7 +271,7 @@ func runDraftCampaign(ctx context.Context, c *Client, args DraftCampaignArgs) (W
 			"targetPartnerSearchNetwork": false,
 		},
 		// Required by EU TTPA regulation (Oct 2025+); defaults to "does not contain".
-		"containsEuPoliticalAdvertising": "DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING",
+		"containsEuPoliticalAdvertising": euPoliticalAds,
 	}
 	if geoSetting != nil {
 		campaignCreate["geoTargetTypeSetting"] = geoSetting
@@ -315,6 +324,7 @@ func runDraftCampaign(ctx context.Context, c *Client, args DraftCampaignArgs) (W
 		summary = fmt.Sprintf("Draft %s campaign %q with %s (budget %.2f/day, dynamic ad group %q, status %s)",
 			channelType, args.CampaignName, dsa, args.DailyBudget, args.AdGroupName, status)
 	}
+	summary += fmt.Sprintf("; EU political advertising: %s", euPoliticalAds)
 	res, err := previewMutate(tool, cid, summary, ops)
 	if err != nil {
 		return WriteResult{}, err
@@ -420,6 +430,7 @@ func init() {
 	f.StringVar(&draftCampaignArgs.DSADomain, "dsa-domain", "", "make this a Dynamic Search Ads campaign for this domain, e.g. example.com (needs --dsa-language-code)")
 	f.StringVar(&draftCampaignArgs.DSALanguageCode, "dsa-language-code", "", "language of the DSA domain, e.g. en (needs --dsa-domain)")
 	f.BoolVar(&draftCampaignArgs.DSAUseSuppliedURLsOnly, "dsa-use-supplied-urls-only", false, "serve only page-feed URLs rather than Google's crawl of the domain")
+	f.StringVar(&draftCampaignArgs.EUPoliticalAds, "eu-political-ads", "", "EU political advertising declaration: does-not-contain (default) or contains")
 	f.StringVar(&draftCampaignArgs.Status, "status", "", "ENABLED, PAUSED (default), or REMOVED")
 	f.StringVar(&draftCampaignArgs.Confirm, "confirm", "", "confirm token from a previous preview")
 	_ = campaignCreateCmd.MarkFlagRequired("name")

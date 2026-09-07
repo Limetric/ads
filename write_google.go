@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
 )
 
 // Google's half of the write path: which endpoint a confirmed write goes to,
@@ -121,7 +123,7 @@ func (c *Client) applyMutation(ctx context.Context, p *PendingMutation) (*applyO
 		if err != nil {
 			return nil, err
 		}
-		if err := partialFailureError(response.PartialErrors); err != nil {
+		if err := mutatePartialFailureError(response); err != nil {
 			return nil, err
 		}
 		return &applyOutcome{Results: response.operationResults()}, nil
@@ -150,4 +152,46 @@ func partialFailureError(raw json.RawMessage) error {
 		status.Message = string(raw)
 	}
 	return fmt.Errorf("google ads mutation partially failed (code %d): %s", status.Code, status.Message)
+}
+
+// mutatePartialFailureError preserves Google's failure while identifying only
+// successes explicitly returned by the API. Empty result slots belong to failed
+// operations and must not be presented as successful writes.
+func mutatePartialFailureError(response *MutateResponse) error {
+	err := partialFailureError(response.PartialErrors)
+	if err == nil {
+		return nil
+	}
+	var applied []string
+	for i, raw := range response.operationResults() {
+		var result map[string]json.RawMessage
+		if json.Unmarshal(raw, &result) != nil {
+			continue
+		}
+		var resourceNames []string
+		for key, value := range result {
+			var resourceName string
+			if key == "resourceName" {
+				_ = json.Unmarshal(value, &resourceName)
+			} else if strings.HasSuffix(key, "Result") {
+				var resource struct {
+					ResourceName string `json:"resourceName"`
+				}
+				if json.Unmarshal(value, &resource) == nil {
+					resourceName = resource.ResourceName
+				}
+			}
+			if resourceName != "" {
+				resourceNames = append(resourceNames, resourceName)
+			}
+		}
+		if len(resourceNames) > 0 {
+			sort.Strings(resourceNames)
+			applied = append(applied, fmt.Sprintf("operation[%d]: %s", i, strings.Join(resourceNames, ", ")))
+		}
+	}
+	if len(applied) > 0 {
+		return fmt.Errorf("%w; confirmed applied (zero-based indices): %s; re-read the affected resources before retrying because changes may have applied", err, strings.Join(applied, "; "))
+	}
+	return fmt.Errorf("%w; re-read the affected resources before retrying because changes may have applied", err)
 }

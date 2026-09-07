@@ -40,7 +40,7 @@ func TestUpdateCampaign_PreviewDisclosesMixedChanges(t *testing.T) {
 				case strings.Contains(body.Query, "campaign.campaign_budget"):
 					_, _ = w.Write([]byte(`{"results":[{"campaign":{"campaignBudget":"customers/1/campaignBudgets/777"},"campaignBudget":{"amountMicros":"20000000"}}]}`))
 				default:
-					_, _ = w.Write([]byte(`{"results":[{"campaign":{"biddingStrategyType":"MAXIMIZE_CONVERSIONS"}}]}`))
+					_, _ = w.Write([]byte(`{"results":[{"campaign":{"containsEuPoliticalAdvertising":"DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING","biddingStrategyType":"MAXIMIZE_CONVERSIONS"}}]}`))
 				}
 			}))
 			defer srv.Close()
@@ -102,6 +102,14 @@ func TestUpdateCampaign_PreviewConstantNamesUnavailable(t *testing.T) {
 			useTempState(t)
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
+				var body struct {
+					Query string `json:"query"`
+				}
+				_ = decodeJSONBody(r, &body)
+				if strings.Contains(body.Query, "campaign.contains_eu_political_advertising") {
+					_, _ = w.Write([]byte(`{"results":[{"campaign":{"containsEuPoliticalAdvertising":"DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING"}}]}`))
+					return
+				}
 				if failure == "read failure" {
 					w.WriteHeader(http.StatusForbidden)
 					_, _ = w.Write([]byte(`{"error":{"code":403,"message":"lookup unavailable"}}`))
@@ -179,7 +187,7 @@ func TestUpdateCampaign_PreviewDoesNotInventCurrentValuesOrChanges(t *testing.T)
 			useTempState(t)
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
-				_, _ = w.Write([]byte(`{"results":[{"campaign":{"campaignBudget":"customers/1/campaignBudgets/777","biddingStrategyType":"MAXIMIZE_CONVERSIONS"}}]}`))
+				_, _ = w.Write([]byte(`{"results":[{"campaign":{"containsEuPoliticalAdvertising":"DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING","campaignBudget":"customers/1/campaignBudgets/777","biddingStrategyType":"MAXIMIZE_CONVERSIONS"}}]}`))
 			}))
 			defer srv.Close()
 			args := tc.args

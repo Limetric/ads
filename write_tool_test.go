@@ -42,6 +42,17 @@ func mutateServer(t *testing.T) (*httptest.Server, *mutateCapture) {
 	t.Helper()
 	cap := &mutateCapture{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "googleAds:search") {
+			var body struct {
+				Query string `json:"query"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if strings.Contains(body.Query, "campaign.contains_eu_political_advertising") {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"results":[{"campaign":{"containsEuPoliticalAdvertising":"DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING"}}]}`))
+				return
+			}
+		}
 		if strings.HasSuffix(r.URL.Path, "googleAds:mutate") {
 			cap.calls++
 			_ = json.NewDecoder(r.Body).Decode(&cap.lastBody)
