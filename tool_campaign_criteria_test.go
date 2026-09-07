@@ -18,6 +18,10 @@ func criteriaServer(t *testing.T, query *string, rows string) *httptest.Server {
 			Query string `json:"query"`
 		}
 		_ = decodeJSONBody(r, &body)
+		if strings.Contains(body.Query, "FROM geo_target_constant") {
+			_, _ = w.Write([]byte(`{"results":[{"geoTargetConstant":{"id":"2840","name":"United States"}}]}`))
+			return
+		}
 		if query != nil {
 			*query = body.Query
 		}
@@ -58,12 +62,17 @@ func TestCampaignCriteria_ListsWithRemovalIDs(t *testing.T) {
 	// gets the ID rather than null.
 	var row struct {
 		RemoveEntityID string `json:"remove_entity_id"`
+		ConstantID     string `json:"constant_id"`
+		ConstantName   string `json:"constant_name"`
 	}
 	if err := json.Unmarshal(res.Criteria[0], &row); err != nil {
 		t.Fatalf("row is not JSON: %v", err)
 	}
 	if row.RemoveEntityID != "111~222" {
 		t.Errorf("removeEntityId = %q, want 111~222", row.RemoveEntityID)
+	}
+	if row.ConstantID != "2840" || row.ConstantName != "United States" {
+		t.Errorf("resolved constant = %q %q", row.ConstantID, row.ConstantName)
 	}
 	if err := json.Unmarshal(res.Criteria[1], &row); err != nil {
 		t.Fatalf("row is not JSON: %v", err)
@@ -92,6 +101,11 @@ func TestCampaignCriteria_RemovalIDRendersAsAColumn(t *testing.T) {
 	table := formatTable(rows, fields)
 	if !strings.Contains(table, "111~222") {
 		t.Errorf("table output does not carry the removal ID:\n%s", table)
+	}
+	for _, output := range []string{table, formatCSV(rows, fields)} {
+		if !strings.Contains(output, "United States") || !strings.Contains(output, "constant_name") {
+			t.Errorf("output omits resolved name: %s", output)
+		}
 	}
 }
 
@@ -186,5 +200,96 @@ func TestEntityResourceAndOp_CampaignCriterion(t *testing.T) {
 	_, _, err = entityResourceAndOp("1", "campaign_criterion", "222")
 	if err == nil || !strings.Contains(err.Error(), "campaignId~criterionId") {
 		t.Fatalf("expected an error naming the composite shape, got %v", err)
+	}
+}
+
+func TestCampaignCriteria_ResolvesConstantsInBatches(t *testing.T) {
+	useTempState(t)
+	var geoQueries, languageQueries int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Query string `json:"query"`
+		}
+		_ = decodeJSONBody(r, &body)
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.Contains(body.Query, "FROM campaign_criterion"):
+			_, _ = w.Write([]byte(`{"results":[
+			{"campaign":{"id":"111"},"campaignCriterion":{"criterionId":"8","negative":false,"status":"ENABLED","location":{"geoTargetConstant":"geoTargetConstants/2608"}}},
+			{"campaign":{"id":"111"},"campaignCriterion":{"criterionId":"9","negative":true,"status":"ENABLED","location":{"geoTargetConstant":"geoTargetConstants/2608"}}},
+			{"campaign":{"id":"111"},"campaignCriterion":{"criterionId":"10","language":{"languageConstant":"languageConstants/1000"}}},
+			{"campaign":{"id":"111"},"campaignCriterion":{"criterionId":"11","location":{"geoTargetConstant":"geoTargetConstants/9999"}}}
+			]}`))
+		case strings.Contains(body.Query, "FROM geo_target_constant"):
+			geoQueries++
+			if !strings.Contains(body.Query, "IN (2608, 9999)") {
+				t.Errorf("unexpected geo query: %s", body.Query)
+			}
+			_, _ = w.Write([]byte(`{"results":[{"geoTargetConstant":{"id":"2608","name":"Philippines"}}]}`))
+		case strings.Contains(body.Query, "FROM language_constant"):
+			languageQueries++
+			if !strings.Contains(body.Query, "IN (1000)") {
+				t.Errorf("unexpected language query: %s", body.Query)
+			}
+			_, _ = w.Write([]byte(`{"results":[{"languageConstant":{"id":"1000","name":"English"}}]}`))
+		default:
+			t.Errorf("unexpected query: %s", body.Query)
+		}
+	}))
+	defer srv.Close()
+	res, err := runCampaignCriteria(t.Context(), newTestClient(t, srv), CampaignCriteriaArgs{CustomerID: "1", CampaignID: "111"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if geoQueries != 1 || languageQueries != 1 {
+		t.Fatalf("queries = %d geo, %d language", geoQueries, languageQueries)
+	}
+	for i, want := range []struct{ id, name, removal string }{
+		{"2608", "Philippines", "111~8"}, {"2608", "Philippines", "111~9"}, {"1000", "English", "111~10"}, {"9999", "", "111~11"},
+	} {
+		row, _ := decodeRow(res.Criteria[i])
+		if resolveField(row, "constant_id") != want.id || resolveField(row, "constant_name") != want.name || resolveField(row, "remove_entity_id") != want.removal {
+			t.Errorf("row %d = %s", i, res.Criteria[i])
+		}
+	}
+	row, _ := decodeRow(res.Criteria[1])
+	if resolveField(row, "campaign_criterion.negative") != "true" || resolveField(row, "campaign_criterion.status") != "ENABLED" {
+		t.Errorf("lost original fields: %s", res.Criteria[1])
+	}
+}
+
+func TestCampaignCriteria_ConstantLookupFailure(t *testing.T) {
+	useTempState(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Query string `json:"query"`
+		}
+		_ = decodeJSONBody(r, &body)
+		if strings.Contains(body.Query, "FROM campaign_criterion") {
+			_, _ = w.Write([]byte(`{"results":` + criteriaRows + `}`))
+			return
+		}
+		http.Error(w, `{"error":{"code":403,"message":"permission denied"}}`, http.StatusForbidden)
+	}))
+	defer srv.Close()
+	_, err := runCampaignCriteria(t.Context(), newTestClient(t, srv), CampaignCriteriaArgs{CustomerID: "1", CampaignID: "111"})
+	if err == nil || !strings.Contains(err.Error(), "resolve geo_target_constant names") {
+		t.Fatalf("lookup error = %v", err)
+	}
+}
+
+func TestCampaignCriteria_NoConstantsNeedsNoLookup(t *testing.T) {
+	useTempState(t)
+	for _, rows := range []string{`[]`, `[{"campaign":{"id":"111"},"campaignCriterion":{"criterionId":"333","type":"KEYWORD","keyword":{"text":"boots"}}}]`} {
+		calls := 0
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			calls++
+			_, _ = w.Write([]byte(`{"results":` + rows + `}`))
+		}))
+		_, err := runCampaignCriteria(t.Context(), newTestClient(t, srv), CampaignCriteriaArgs{CustomerID: "1", CampaignID: "111"})
+		srv.Close()
+		if err != nil || calls != 1 {
+			t.Errorf("calls=%d err=%v", calls, err)
+		}
 	}
 }

@@ -414,11 +414,26 @@ and `remove` takes one away:
 ads google campaign criteria --campaign-id 111 --format table
 ads google campaign criteria --campaign-id 111 --type AD_SCHEDULE
 
-# Remove one. Destructive, so it takes two confirmations.
+# Remove by the constant IDs used when adding targeting (two confirmations).
+ads google campaign update --campaign-id 111 --remove-geo-target-id 2608 --remove-language-id 1000
+ads confirm <token>
+ads confirm <second-token>
+
+# Or remove one criterion by its composite ID (two confirmations).
 ads google remove --type campaign_criterion --id 111~222
 ads google remove --type campaign_criterion --id 111~222 --confirm <token>
 ads google remove --type campaign_criterion --id 111~222 --confirm <second-token>
 ```
+
+Geo and language rows also expose `constant_id` and `constant_name`, resolved
+in batches, alongside the criterion ID, negative flag, and status. Filter with
+`--type LOCATION` to inspect current geo targeting.
+
+The repeatable `--remove-geo-target-id` and `--remove-language-id` flags resolve
+constant IDs in one campaign-criteria lookup before staging removals. Geo removal
+includes excluded locations. Missing matches fail without staging changes;
+adding and removing the same constant in one call is rejected. Confirmation
+applies the staged criterion IDs without looking them up again.
 
 A criterion is addressed by the composite `campaignId~criterionId`. The
 criterion ID is minted by Google, not chosen by you, which is why the listing
