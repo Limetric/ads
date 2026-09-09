@@ -367,6 +367,20 @@ is changed on the shared strategy itself. A clear flag cannot be combined with
 the target value it removes, and it touches only the target — a
 `MAXIMIZE_CONVERSION_VALUE` campaign keeps its ROAS degradation tolerance.
 
+For an App install campaign using target CPI, switch to Maximize conversions
+without supplying a target:
+
+```bash
+ads google campaign update --campaign-id 111 --bidding-strategy MAXIMIZE_CONVERSIONS
+ads google campaign update --campaign-id 111 --bidding-strategy MAXIMIZE_CONVERSIONS --confirm <token>
+```
+
+This switches both the bidding strategy and the App campaign's install goal to
+`OPTIMIZE_INSTALLS_WITHOUT_TARGET_INSTALL_COST` in one confirmed update. The app
+ID and store are preserved. MCP callers use `google_update_campaign` with
+`bidding_strategy: "MAXIMIZE_CONVERSIONS"` and no `target_cpa`. A standalone
+`--clear-target-cpa` still requires an existing Maximize conversions strategy.
+
 ### Keyword bids
 
 `bidding set-keyword-bid` takes `--new-bid` (currency units), which must be

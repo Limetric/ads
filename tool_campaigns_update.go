@@ -166,13 +166,15 @@ func validateClearTargetArgs(args UpdateCampaignArgs) error {
 type campaignBiddingStrategyState struct {
 	Type      string
 	Portfolio string
+	Channel   string
+	AppGoal   string
 }
 
 func fetchCampaignBiddingStrategyState(ctx context.Context, c *Client, customerID, campaignID string) (campaignBiddingStrategyState, error) {
 	if c == nil {
 		return campaignBiddingStrategyState{}, fmt.Errorf("could not resolve the bidding strategy for campaign %s: Google Ads client is unavailable", campaignID)
 	}
-	q := fmt.Sprintf("SELECT campaign.bidding_strategy_type, campaign.bidding_strategy FROM campaign WHERE campaign.id = %s", campaignID)
+	q := fmt.Sprintf("SELECT campaign.bidding_strategy_type, campaign.bidding_strategy, campaign.advertising_channel_type, campaign.app_campaign_setting.bidding_strategy_goal_type FROM campaign WHERE campaign.id = %s", campaignID)
 	rows, err := c.Search(ctx, customerID, q)
 	if err != nil {
 		return campaignBiddingStrategyState{}, fmt.Errorf("could not resolve the bidding strategy for campaign %s: %w", campaignID, err)
@@ -182,8 +184,12 @@ func fetchCampaignBiddingStrategyState(ctx context.Context, c *Client, customerI
 	}
 	var row struct {
 		Campaign struct {
-			BiddingStrategyType string `json:"biddingStrategyType"`
-			BiddingStrategy     string `json:"biddingStrategy"`
+			BiddingStrategyType    string `json:"biddingStrategyType"`
+			BiddingStrategy        string `json:"biddingStrategy"`
+			AdvertisingChannelType string `json:"advertisingChannelType"`
+			AppCampaignSetting     struct {
+				BiddingStrategyGoalType string `json:"biddingStrategyGoalType"`
+			} `json:"appCampaignSetting"`
 		} `json:"campaign"`
 	}
 	if err := json.Unmarshal(rows[0], &row); err != nil {
@@ -195,6 +201,8 @@ func fetchCampaignBiddingStrategyState(ctx context.Context, c *Client, customerI
 	return campaignBiddingStrategyState{
 		Type:      row.Campaign.BiddingStrategyType,
 		Portfolio: row.Campaign.BiddingStrategy,
+		Channel:   row.Campaign.AdvertisingChannelType,
+		AppGoal:   row.Campaign.AppCampaignSetting.BiddingStrategyGoalType,
 	}, nil
 }
 
@@ -590,9 +598,12 @@ func runUpdateCampaign(ctx context.Context, c *Client, args UpdateCampaignArgs) 
 	if clearTarget != nil && strategy != clearTarget.strategy {
 		return WriteResult{}, toolError(tool, fmt.Errorf("campaign %s bids with %s, which has no optional %s to remove — %s applies to %s; pass bidding_strategy %s to move the campaign onto it", args.CampaignID, strategy, clearTarget.label, clearTarget.flag, clearTarget.strategy, clearTarget.strategy))
 	}
-	// A clear wants exactly the empty-message update the redundancy check below
-	// suppresses, so it never takes that branch.
-	if clearTarget == nil && strategy != "" && args.TargetCPA == 0 && args.TargetROAS == 0 && biddingStrategyAllowsEmptyUpdate(strategy) {
+	// App install bidding has a separate goal that must change alongside the
+	// strategy when removing a target CPI. Inspect explicit CPA clears too,
+	// even though they must bypass the redundant-strategy suppression.
+	removeAppTargetCPI := false
+	if strategy != "" && args.TargetCPA == 0 && args.TargetROAS == 0 && biddingStrategyAllowsEmptyUpdate(strategy) &&
+		(clearTarget == nil || (args.BiddingStrategy == "MAXIMIZE_CONVERSIONS" && args.ClearTargetCPA)) {
 		current, err := fetchCampaignBiddingStrategyState(ctx, c, cid, campaignID)
 		if err != nil {
 			return WriteResult{}, toolError(tool, err)
@@ -601,7 +612,9 @@ func runUpdateCampaign(ctx context.Context, c *Client, args UpdateCampaignArgs) 
 		// must therefore be a no-op, or it could silently remove an existing
 		// target, bid ceiling, or enhanced-CPC setting. A portfolio resource is
 		// not redundant: the explicit strategy selects a standard strategy.
-		if current.Portfolio == "" && current.Type == canonicalBiddingStrategy(strategy) {
+		removeAppTargetCPI = strategy == "MAXIMIZE_CONVERSIONS" && current.Channel == "MULTI_CHANNEL" &&
+			current.AppGoal == "OPTIMIZE_INSTALLS_TARGET_INSTALL_COST"
+		if clearTarget == nil && !removeAppTargetCPI && current.Portfolio == "" && current.Type == canonicalBiddingStrategy(strategy) {
 			strategy = ""
 		}
 	}
@@ -626,6 +639,11 @@ func runUpdateCampaign(ctx context.Context, c *Client, args UpdateCampaignArgs) 
 		if err := applyBiddingStrategyUpdate(update, &mask, strategy, args.TargetCPA, args.TargetROAS); err != nil {
 			return WriteResult{}, err
 		}
+	}
+	if removeAppTargetCPI {
+		update["appCampaignSetting"] = map[string]any{"biddingStrategyGoalType": "OPTIMIZE_INSTALLS_WITHOUT_TARGET_INSTALL_COST"}
+		mask = append(mask, "appCampaignSetting.biddingStrategyGoalType")
+		changes = append(changes, "optimize app installs without a target CPI")
 	}
 	if strategy != "" && clearTarget == nil {
 		if args.BiddingStrategy != "" {
