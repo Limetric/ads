@@ -107,6 +107,21 @@ codex plugin marketplace add Limetric/ads
 codex plugin add ads@ads
 ```
 
+### With the `skills` CLI
+
+For any other agent the [`skills`](https://github.com/vercel-labs/skills) CLI
+supports — Cursor, Gemini CLI, GitHub Copilot, OpenCode, … — install the same
+skill straight from the repo. As with the plugins, the `ads` binary has to be
+installed and on your `PATH`:
+
+```bash
+npx skills add Limetric/ads --skill ads            # into the current directory
+npx skills add Limetric/ads --skill ads --global   # for all directories
+```
+
+`skills` asks which agents to enable it for; pass `--agent <name>` to pick one
+up front. Run `npx skills update` later to pull in the latest skill.
+
 ## Concepts
 
 ### Where the refresh token lives
