@@ -8,11 +8,18 @@ concepts shared across platforms (token store, confirm flow, output formats).
 
 ## Prerequisites
 
-Google gates the Ads API behind three separate things, and you need all three
-before the first call succeeds:
+Google gates the Ads API behind two things, and you need both before the first
+call succeeds:
 
-1. **A Google Cloud project with the Google Ads API enabled** —
-   [console.cloud.google.com/apis/library/googleads.googleapis.com](https://console.cloud.google.com/apis/library/googleads.googleapis.com)
+1. **A Google Cloud project with the Google Ads API enabled and granted access** —
+   enable it at
+   [console.cloud.google.com/apis/library/googleads.googleapis.com](https://console.cloud.google.com/apis/library/googleads.googleapis.com),
+   then check the access level on the project's **Google Ads API Overview** page
+   ([console.cloud.google.com/apis/api/googleads.googleapis.com/overview](https://console.cloud.google.com/apis/api/googleads.googleapis.com/overview)).
+   Access levels (Test Account, Explorer, Basic, Standard) belong to the Cloud
+   project that owns your OAuth client. A project with only Test Account access
+   cannot reach production accounts — the most common reason a correct-looking
+   setup fails to return live data.
 2. **A Desktop-app OAuth client** in that project —
    [console.cloud.google.com/apis/credentials](https://console.cloud.google.com/apis/credentials).
    Download its JSON. A Web-application client also works, but Desktop app is
@@ -21,11 +28,11 @@ before the first call succeeds:
    You may also need to fill in the
    [OAuth consent screen](https://console.cloud.google.com/apis/credentials/consent)
    before a client can be created.
-3. **A Google Ads developer token** — in Google Ads, **Tools & Settings → API
-   Center** ([ads.google.com/aw/apicenter](https://ads.google.com/aw/apicenter)).
-   A fresh token starts with test-account access only; production access needs
-   Google's approval. This is the most common reason a correct-looking setup
-   fails to return live data.
+
+No developer token is needed. Google moved API access from developer tokens to
+Cloud projects in September 2026: the API ignores the `developer-token` header,
+and a future major API version will reject it. `ads` sends the header only if
+`GOOGLE_ADS_DEVELOPER_TOKEN` or `developer_token` is still set — remove it.
 
 Optionally, a **manager (MCC) account ID** if you operate accounts through a
 manager account.
@@ -39,13 +46,13 @@ the result with a live API call:
 ads login google
 ```
 
-It runs five steps: Cloud project + API enable, Desktop-app OAuth client,
-browser sign-in, developer token, and the optional manager account ID. It offers
-to open each console page for you (`--no-browser` prints the URLs instead), then
-saves everything and verifies by listing your accessible accounts.
+It runs four steps: Cloud project + API access, Desktop-app OAuth client,
+browser sign-in, and the optional manager account ID. It offers to open each
+console page for you (`--no-browser` prints the URLs instead), then saves
+everything and verifies by listing your accessible accounts.
 
-Run it again any time. If an OAuth client and developer token are already
-configured, it skips the setup steps and just re-establishes the sign-in.
+Run it again any time. If an OAuth client is already configured, it skips the
+setup steps and just re-establishes the sign-in.
 
 Useful flags:
 
@@ -61,7 +68,6 @@ Useful flags:
 Set the environment directly and skip the wizard with `--no-input`:
 
 ```bash
-export GOOGLE_ADS_DEVELOPER_TOKEN=...
 export GOOGLE_ADS_CLIENT_ID=...
 export GOOGLE_ADS_CLIENT_SECRET=...
 export GOOGLE_ADS_LOGIN_CUSTOMER_ID=123-456-7890   # optional manager account
@@ -76,7 +82,6 @@ Everything except the refresh token can also live in the `[google]` table of
 
 ```toml
 [google]
-developer_token   = "..."
 client_id         = "..."
 client_secret     = "..."
 login_customer_id = "1234567890"
@@ -87,7 +92,7 @@ default_customer_id = "1234567890"
 
 | Variable | Purpose |
 | --- | --- |
-| `GOOGLE_ADS_DEVELOPER_TOKEN` | Developer token from the API Center |
+| `GOOGLE_ADS_DEVELOPER_TOKEN` | Optional and no longer needed — the API ignores it; sent only if set |
 | `GOOGLE_ADS_CLIENT_ID` | OAuth client ID |
 | `GOOGLE_ADS_CLIENT_SECRET` | OAuth client secret |
 | `GOOGLE_ADS_LOGIN_CUSTOMER_ID` | Manager (MCC) account, when operating through one |
@@ -544,7 +549,8 @@ the token store is, whether it is writable, and how old the sign-in is.
 
 | Symptom | Likely cause |
 | --- | --- |
-| Verification fails right after the wizard | Developer token not approved yet, or mistyped |
+| Verification fails right after the wizard | The Cloud project behind your OAuth client has no Google Ads API access yet — check its Google Ads API Overview page |
+| `CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION` or `ACTION_NOT_PERMITTED` on a live account | The Cloud project has only Test Account access — apply for Explorer access or higher on its Google Ads API Overview page |
 | `invalid_grant` | Sign-in revoked or expired — re-run `ads login google` |
 | Sign-in mismatch warning | The saved token belongs to a different OAuth client — re-run `ads login google` |
 | `listen on 127.0.0.1:8085` fails | Port busy — pass `--port` |

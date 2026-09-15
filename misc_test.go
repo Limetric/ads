@@ -99,6 +99,27 @@ func TestAPIError_GoogleAdsFailureDetails(t *testing.T) {
 	}
 }
 
+// Access levels belong to the Cloud project behind the OAuth client, so an
+// access-level failure must point there — nothing in ads' config can fix it.
+func TestAPIError_AccessLevelHint(t *testing.T) {
+	failure := func(code string) []byte {
+		return []byte(`{"error":{"code":403,"status":"PERMISSION_DENIED","message":"The caller does not have permission","details":[{"errors":[{"errorCode":{"authorizationError":"` + code + `"},"message":"denied"}]}]}}`)
+	}
+	for _, c := range []struct{ code, want string }{
+		{"CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION", "apply for Explorer access or higher"},
+		{"DEVELOPER_TOKEN_NOT_APPROVED", "apply for Explorer access or higher"},
+		{"ACTION_NOT_PERMITTED", "may have only test-account access"},
+	} {
+		msg := apiError(403, failure(c.code)).Error()
+		if !strings.Contains(msg, c.code) || !strings.Contains(msg, c.want) || !strings.Contains(msg, urlAPIOverview) {
+			t.Errorf("%s: access-level hint missing:\n%s", c.code, msg)
+		}
+	}
+	if msg := apiError(403, failure("USER_PERMISSION_DENIED")).Error(); strings.Contains(msg, urlAPIOverview) {
+		t.Errorf("unrelated authorization error got an access-level hint:\n%s", msg)
+	}
+}
+
 func TestParseSitelinkFlag(t *testing.T) {
 	sl, err := parseSitelinkFlag("Shop|https://x.com/shop|Great deals|Today only")
 	if err != nil {

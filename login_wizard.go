@@ -141,7 +141,6 @@ const (
 	urlEnableAPI   = "https://console.cloud.google.com/apis/library/googleads.googleapis.com"
 	urlCredentials = "https://console.cloud.google.com/apis/credentials"
 	urlConsent     = "https://console.cloud.google.com/apis/credentials/consent"
-	urlAPICenter   = "https://ads.google.com/aw/apicenter"
 )
 
 // offerToOpen prints an instruction + URL and (unless --no-browser) offers to
@@ -236,34 +235,6 @@ func wizardGatherClient(p prompter, out io.Writer, cfg *GoogleConfig, openFn fun
 	}
 }
 
-// wizardGatherDeveloperToken reuses an existing developer token or prompts for a
-// new one (masked), re-prompting until non-empty.
-func wizardGatherDeveloperToken(p prompter, out io.Writer, cfg *GoogleConfig, openFn func(string) error) (string, error) {
-	st := newStyles(out)
-	if cfg.DeveloperToken != "" {
-		keep, err := p.confirm(st.prompt(fmt.Sprintf("   Found a developer token (%s). Keep it?", secretHint(cfg.DeveloperToken))), true)
-		if err != nil {
-			return "", err
-		}
-		if keep {
-			return cfg.DeveloperToken, nil
-		}
-	}
-	if err := offerToOpen(p, out, "In Google Ads: Tools & Settings → API Center.", urlAPICenter, openFn); err != nil {
-		return "", err
-	}
-	for {
-		tok, err := p.secret(st.prompt("   Paste your developer token") + ": ")
-		if err != nil {
-			return "", err
-		}
-		if tok != "" {
-			return tok, nil
-		}
-		fmt.Fprintf(out, "   %s\n", st.failure("developer token can't be empty — try again."))
-	}
-}
-
 // wizardGatherLoginCustomerID prompts for an optional manager (MCC) account ID,
 // defaulting to the existing value and stripping dashes.
 func wizardGatherLoginCustomerID(p prompter, out io.Writer, cfg *GoogleConfig) (string, error) {
@@ -328,27 +299,26 @@ func wizardGatherRefreshToken(ctx context.Context, p prompter, out io.Writer, cr
 }
 
 // wizardSetupComplete reports whether cfg already holds everything the wizard
-// would otherwise walk the user through — an OAuth client and a developer token.
-// When it does, `ads login google` is being run to (re)establish the sign-in,
-// not to set up from scratch, and the wizard skips straight to the browser step.
+// would otherwise walk the user through — an OAuth client. When it does,
+// `ads login google` is being run to (re)establish the sign-in, not to set up
+// from scratch, and the wizard skips straight to the browser step.
 func wizardSetupComplete(cfg *GoogleConfig) bool {
-	return cfg.ClientID != "" && cfg.ClientSecret != "" && cfg.DeveloperToken != ""
+	return cfg.ClientID != "" && cfg.ClientSecret != ""
 }
 
-// runLoginWizard guides first-time setup end to end: prerequisites, OAuth client,
-// sign-in, developer token, optional MCC id, then writes config and verifies with
-// a live API call.
+// runLoginWizard guides first-time setup end to end: Cloud project and API
+// access, OAuth client, sign-in, optional MCC id, then writes config and
+// verifies with a live API call. No step asks for a developer token: API access
+// belongs to the Cloud project that owns the OAuth client.
 //
-// When the config already holds an OAuth client and a developer token, it
-// offers to keep them and only run the sign-in — the case after a token store
-// went missing, or a revoked grant — instead of replaying the five-step
-// first-time script.
+// When the config already holds an OAuth client, it offers to keep it and only
+// run the sign-in — the case after a token store went missing, or a revoked
+// grant — instead of replaying the four-step first-time script.
 func runLoginWizard(ctx context.Context, out io.Writer, p prompter, cfg *GoogleConfig, openFn func(string) error, port int) error {
 	st := newStyles(out)
 	if wizardSetupComplete(cfg) {
 		fmt.Fprintln(out, st.prompt("Found an existing Google Ads setup:"))
 		fmt.Fprintf(out, "   %s%s\n", st.field("OAuth client", wizardFieldWidth), secretHint(cfg.ClientID))
-		fmt.Fprintf(out, "   %s%s\n", st.field("developer token", wizardFieldWidth), secretHint(cfg.DeveloperToken))
 		if cfg.LoginCustomerID != "" {
 			fmt.Fprintf(out, "   %s%s\n", st.field("login customer ID", wizardFieldWidth), dashCustomerID(cfg.LoginCustomerID))
 		}
@@ -364,22 +334,28 @@ func runLoginWizard(ctx context.Context, out io.Writer, p prompter, cfg *GoogleC
 	}
 
 	fmt.Fprintln(out, st.prompt("Welcome to ads. Let's get you connected to Google Ads."))
-	fmt.Fprintln(out, st.muted("You'll need: a Google Cloud project, a Desktop-app OAuth client, and a"))
-	fmt.Fprintln(out, st.muted("Google Ads developer token. I'll walk you through each — about 5 minutes."))
+	fmt.Fprintln(out, st.muted("You'll need: a Google Cloud project with Google Ads API access and a"))
+	fmt.Fprintln(out, st.muted("Desktop-app OAuth client. I'll walk you through each — about 5 minutes."))
 	fmt.Fprintln(out)
 
-	fmt.Fprintln(out, st.header("Step 1/5 · Google Cloud project + Google Ads API"))
+	fmt.Fprintln(out, st.header("Step 1/4 · Google Cloud project + Google Ads API access"))
 	if err := offerToOpen(p, out, "Sign in, pick or create a project, and click Enable.", urlEnableAPI, openFn); err != nil {
 		return err
 	}
+	// Verification below only lists accessible accounts, which passes even with
+	// Test Account access, so this is the one place the wizard can point at the
+	// access level live accounts need.
+	if err := offerToOpen(p, out, "Check the project's API access level — live accounts need Explorer access or higher.", urlAPIOverview, openFn); err != nil {
+		return err
+	}
 
-	fmt.Fprintln(out, "\n"+st.header("Step 2/5 · Desktop-app OAuth client"))
+	fmt.Fprintln(out, "\n"+st.header("Step 2/4 · Desktop-app OAuth client"))
 	creds, err := wizardGatherClient(p, out, cfg, openFn)
 	if err != nil {
 		return err
 	}
 
-	fmt.Fprintln(out, "\n"+st.header("Step 3/5 · Sign in (browser)"))
+	fmt.Fprintln(out, "\n"+st.header("Step 3/4 · Sign in (browser)"))
 	// Any existing sign-in lives in the token store, so consult it before
 	// offering to reuse one. This is also where a user upgrading from a
 	// config.toml refresh_token gets migrated.
@@ -391,25 +367,18 @@ func runLoginWizard(ctx context.Context, out io.Writer, p prompter, cfg *GoogleC
 		return err
 	}
 
-	fmt.Fprintln(out, "\n"+st.header("Step 4/5 · Developer token"))
-	devToken, err := wizardGatherDeveloperToken(p, out, cfg, openFn)
-	if err != nil {
-		return err
-	}
-
-	fmt.Fprintln(out, "\n"+st.header("Step 5/5 · Manager (MCC) account ID — optional"))
+	fmt.Fprintln(out, "\n"+st.header("Step 4/4 · Manager (MCC) account ID — optional"))
 	loginCID, err := wizardGatherLoginCustomerID(p, out, cfg)
 	if err != nil {
 		return err
 	}
 
-	return wizardSaveAndVerify(ctx, out, cfg, creds, refreshToken, devToken, loginCID)
+	return wizardSaveAndVerify(ctx, out, cfg, creds, refreshToken, loginCID)
 }
 
-// runSignInOnly is the wizard's short form: the OAuth client and developer
-// token in cfg are kept as they are, and only the sign-in is (re)established.
-// A usable saved sign-in is still offered for reuse, so running it against a
-// working setup is harmless.
+// runSignInOnly is the wizard's short form: the OAuth client in cfg is kept as
+// it is, and only the sign-in is (re)established. A usable saved sign-in is
+// still offered for reuse, so running it against a working setup is harmless.
 func runSignInOnly(ctx context.Context, out io.Writer, p prompter, cfg *GoogleConfig, openFn func(string) error, port int) error {
 	creds := clientCreds{clientID: cfg.ClientID, clientSecret: cfg.ClientSecret, kind: "config"}
 	fmt.Fprintln(out, "\n"+newStyles(out).header("Sign in (browser)"))
@@ -420,13 +389,13 @@ func runSignInOnly(ctx context.Context, out io.Writer, p prompter, cfg *GoogleCo
 	if err != nil {
 		return err
 	}
-	return wizardSaveAndVerify(ctx, out, cfg, creds, refreshToken, cfg.DeveloperToken, cfg.LoginCustomerID)
+	return wizardSaveAndVerify(ctx, out, cfg, creds, refreshToken, cfg.LoginCustomerID)
 }
 
 // wizardSaveAndVerify writes the gathered credentials — client and token to
-// their homes, developer token and MCC id into config — and then proves the
-// setup works with a live API call.
-func wizardSaveAndVerify(ctx context.Context, out io.Writer, cfg *GoogleConfig, creds clientCreds, refreshToken, devToken, loginCID string) error {
+// their homes, MCC id into config — and then proves the setup works with a live
+// API call. A legacy developer_token already in the config is left untouched.
+func wizardSaveAndVerify(ctx context.Context, out io.Writer, cfg *GoogleConfig, creds clientCreds, refreshToken, loginCID string) error {
 	st := newStyles(out)
 	target, err := configWriteTarget(configPath)
 	if err != nil {
@@ -437,7 +406,6 @@ func wizardSaveAndVerify(ctx context.Context, out io.Writer, cfg *GoogleConfig, 
 		return err
 	}
 	if err := mergeConfigValues(target, map[string]string{
-		"developer_token":   devToken,
 		"login_customer_id": loginCID,
 	}); err != nil {
 		return err
@@ -455,7 +423,6 @@ func wizardSaveAndVerify(ctx context.Context, out io.Writer, cfg *GoogleConfig, 
 	// deprecation notices in the middle of the wizard's own output.
 	final.RefreshToken = refreshToken
 	final.refreshTokenResolved = true
-	final.DeveloperToken = devToken
 	final.LoginCustomerID = loginCID
 	fmt.Fprint(out, st.muted("Verifying… "))
 	client, err := NewClient(ctx, &final)
@@ -474,7 +441,7 @@ func wizardSaveAndVerify(ctx context.Context, out io.Writer, cfg *GoogleConfig, 
 	}
 	fmt.Fprintln(out, st.failure("✗"))
 	fmt.Fprintf(out, "%s\n", st.failure(fmt.Sprintf("Saved your config, but verification failed: %v", err)))
-	fmt.Fprintln(out, st.muted("Likely: the developer token isn't approved yet or was mistyped, or an OAuth problem."))
+	fmt.Fprintln(out, st.muted("Likely: the Cloud project behind your OAuth client lacks Google Ads API access, or an OAuth problem."))
 	fmt.Fprintf(out, "%s\n", st.muted("Fix it and re-run `ads login google`, or run `ads doctor google`."))
 	return fmt.Errorf("verification failed: %w", err)
 }

@@ -184,7 +184,7 @@ is platform-neutral and overrides the store directory.
 
 | Key | Owner after the split |
 | --- | --- |
-| `GOOGLE_ADS_DEVELOPER_TOKEN` | Google provider |
+| `GOOGLE_ADS_DEVELOPER_TOKEN` | Google provider (optional — ignored by the API; access comes from the Cloud project) |
 | `GOOGLE_ADS_CLIENT_ID` | Google provider |
 | `GOOGLE_ADS_CLIENT_SECRET` | Google provider |
 | `GOOGLE_ADS_REFRESH_TOKEN` | Google provider (deprecated — seeds the token store) |

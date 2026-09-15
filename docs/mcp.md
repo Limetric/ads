@@ -18,7 +18,6 @@ Point your MCP host at the binary:
       "command": "/path/to/build/ads",
       "args": ["mcp"],
       "env": {
-        "GOOGLE_ADS_DEVELOPER_TOKEN": "...",
         "GOOGLE_ADS_CLIENT_ID": "...",
         "GOOGLE_ADS_CLIENT_SECRET": "...",
         "GOOGLE_ADS_LOGIN_CUSTOMER_ID": "..."
@@ -28,8 +27,8 @@ Point your MCP host at the binary:
 }
 ```
 
-The `env` block supplies Google's app credentials (developer token, OAuth
-client) — include them only if they aren't already in `config.toml`. The
+The `env` block supplies Google's app credentials (the OAuth client) — include
+them only if they aren't already in `config.toml`. The
 refresh token is separate and never belongs in host config: run
 `ads login google` once first and it's read from the token store. Add
 `"GOADS_TOKEN_STORE": "..."` if the host runs somewhere `~/.config/ads` isn't

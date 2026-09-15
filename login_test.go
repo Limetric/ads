@@ -441,3 +441,20 @@ func TestLoopbackRedirectURL_UsesLiteralLoopbackIP(t *testing.T) {
 		t.Fatalf("loopbackRedirectURL = %q", got)
 	}
 }
+
+// The CI / MCP handoff names only what a host still needs: the OAuth client.
+// A developer token is ignored by the API now, so advising one would be noise.
+func TestPrintGoogleHandoff_OmitsDeveloperToken(t *testing.T) {
+	useTokenStore(t)
+	var out strings.Builder
+	printGoogleHandoff(&out, styles{}, clientCreds{clientID: "cid", clientSecret: "csec"})
+	got := out.String()
+	if strings.Contains(got, "DEVELOPER_TOKEN") {
+		t.Errorf("handoff still advises a developer token:\n%s", got)
+	}
+	for _, want := range []string{`GOOGLE_ADS_CLIENT_ID="cid"`, `GOOGLE_ADS_CLIENT_SECRET="csec"`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("handoff missing %q:\n%s", want, got)
+		}
+	}
+}

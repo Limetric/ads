@@ -69,7 +69,7 @@ ads google search --customer-id 123-456-7890 \
   --query 'SELECT campaign.id, campaign.name FROM campaign LIMIT 10' | jq
 ```
 
-Google's prerequisites (Cloud project, OAuth client, developer token) and the
+Google's prerequisites (a Cloud project with Google Ads API access, an OAuth client) and the
 non-interactive `--no-input` path for CI are in
 [`docs/google.md`](docs/google.md). Using Microsoft Advertising? Start at
 [`docs/bing.md`](docs/bing.md) — it differs in ways worth reading first.

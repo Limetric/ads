@@ -160,8 +160,13 @@ func TestConfig_Validate(t *testing.T) {
 	if missing == nil {
 		t.Fatal("expected missing-credentials error against production base URL")
 	}
+	// The developer token is optional now — access comes from the Cloud
+	// project — so it must not be named as missing.
+	if strings.Contains(missing.Error(), "DEVELOPER_TOKEN") {
+		t.Errorf("developer token must not be required: %v", missing)
+	}
 	for _, want := range []string{
-		"GOOGLE_ADS_DEVELOPER_TOKEN", "GOOGLE_ADS_CLIENT_ID",
+		"GOOGLE_ADS_CLIENT_ID",
 		"GOOGLE_ADS_CLIENT_SECRET",
 		// The refresh token is no longer an env var to set: the fix is to sign
 		// in, which is what the message has to say.
@@ -176,7 +181,7 @@ func TestConfig_Validate(t *testing.T) {
 		t.Errorf("test base URL should skip validation: %v", err)
 	}
 	// Complete production credentials validate.
-	full := &GoogleConfig{BaseURL: defaultBaseURL, DeveloperToken: "d", ClientID: "c", ClientSecret: "s", RefreshToken: "r"}
+	full := &GoogleConfig{BaseURL: defaultBaseURL, ClientID: "c", ClientSecret: "s", RefreshToken: "r"}
 	if err := full.validate(); err != nil {
 		t.Errorf("complete credentials should validate: %v", err)
 	}
