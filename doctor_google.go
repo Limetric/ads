@@ -44,7 +44,11 @@ func googleDoctor(ctx context.Context, out io.Writer, offline bool) (liveResult,
 	st := newStyles(out)
 	field := func(label, value string) { fmt.Fprintf(out, "%s%s\n", st.field(label, doctorFieldWidth), value) }
 	field("base URL", cfg.BaseURL)
-	field("developer token", st.presence(cfg.DeveloperToken))
+	if cfg.DeveloperToken != "" {
+		// Google ignores the header now and a future API version rejects it, so
+		// a leftover token is worth flagging — but it is not a failure.
+		field("developer token", st.warning("set — no longer needed; remove GOOGLE_ADS_DEVELOPER_TOKEN / developer_token"))
+	}
 	field("client id", st.presence(cfg.ClientID))
 	field("client secret", st.presence(cfg.ClientSecret))
 	field("token store", store.location())
@@ -65,13 +69,14 @@ func googleDoctor(ctx context.Context, out io.Writer, offline bool) (liveResult,
 // line per probe (✓ ok, ✗ definitive failure, ? inconclusive). It runs two
 // probes because they fail independently:
 //
-//  1. listAccessibleCustomers — needs only OAuth + developer token, so it
-//     confirms credentials are valid and lists reachable accounts. A test-level
-//     developer token still passes this.
+//  1. listAccessibleCustomers — needs only OAuth, so it confirms credentials
+//     are valid and lists reachable accounts. A Cloud project with only
+//     test-account access still passes this.
 //  2. a real customer_client search on the login customer — what every read
-//     command does. Unlike probe 1 it fails when the developer token is only
-//     approved for test accounts (DEVELOPER_TOKEN_NOT_APPROVED), the exact gap
-//     that made plain `doctor` say "ready" for a setup that can't query.
+//     command does. Unlike probe 1 it fails when the project is only approved
+//     for test accounts (CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION; older API
+//     versions say ACTION_NOT_PERMITTED), the exact gap that made plain
+//     `doctor` say "ready" for a setup that can't query.
 //
 // It returns the verdict of the first probe that doesn't pass, so the caller can
 // set the status line and exit code.

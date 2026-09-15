@@ -366,7 +366,7 @@ func isInteractiveLogin() bool {
 var googleLoginCmd = &cobra.Command{
 	Use:   "google",
 	Short: "Sign in to Google Ads via OAuth2 and save a refresh token",
-	Long:  "Runs Google's loopback OAuth2 flow: it opens your browser, captures the\nauthorization code on localhost, exchanges it for a refresh token, and writes\nthe credentials into your ads config. The developer token is still required\nseparately (see `ads doctor google`).",
+	Long:  "Runs Google's loopback OAuth2 flow: it opens your browser, captures the\nauthorization code on localhost, exchanges it for a refresh token, and writes\nthe credentials into your ads config. No developer token is needed: API access\ncomes from the Google Cloud project that owns the OAuth client.",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		if isInteractiveLogin() {
@@ -460,7 +460,7 @@ var googleLoginCmd = &cobra.Command{
 		}
 		fmt.Fprintf(out, "%s Wrote credentials to %s\n", st.success("✓"), st.muted(target))
 		printGoogleHandoff(out, st, creds)
-		fmt.Fprintf(out, "Run %s to verify. %s\n", st.accent("`ads doctor google`"), st.muted("(developer token still required.)"))
+		fmt.Fprintf(out, "Run %s to verify.\n", st.accent("`ads doctor google`"))
 		return nil
 	},
 }
@@ -471,7 +471,6 @@ var googleLoginCmd = &cobra.Command{
 // stops working outright on a platform that rotates its refresh tokens.
 func printGoogleHandoff(out io.Writer, st styles, c clientCreds) {
 	fmt.Fprintln(out, "\n"+st.accent("For CI / MCP hosts, set:"))
-	fmt.Fprintln(out, "  export GOOGLE_ADS_DEVELOPER_TOKEN=\"…\"")
 	fmt.Fprintf(out, "  export GOOGLE_ADS_CLIENT_ID=%q\n", c.clientID)
 	fmt.Fprintf(out, "  export GOOGLE_ADS_CLIENT_SECRET=%q\n", c.clientSecret)
 	if path, err := tokenStorePath(googleTokenPolicy.Platform); err == nil {

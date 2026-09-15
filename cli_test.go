@@ -351,8 +351,12 @@ func TestCLI_DoctorReportsMissingCredentials(t *testing.T) {
 	if err == nil {
 		t.Errorf("doctor should fail when credentials are missing")
 	}
+	// Bing still requires its developer token, so look only at Google's section.
+	_, google, _ := strings.Cut(out, "=== Google Ads (google) ===")
+	if google == "" || strings.Contains(google, "developer token") {
+		t.Errorf("doctor must not report an unset developer token as missing:\n%s", out)
+	}
 	for _, want := range []string{
-		"developer token:    MISSING",
 		"token store:        " + filepath.Join(storeDir, "google.json"),
 		"saved sign-in:      none saved — run `ads login google`",
 		"login customer id:  (none)",
@@ -414,7 +418,8 @@ func TestCLI_DoctorReportsAnUnsavedFallbackSignIn(t *testing.T) {
 	if strings.Contains(out, "none saved") {
 		t.Errorf("doctor called a working setup unsigned-in:\n%s", out)
 	}
-	for _, want := range []string{"not saved — using GOOGLE_ADS_REFRESH_TOKEN", "status: ready"} {
+	// A leftover developer token is flagged for removal, not treated as a failure.
+	for _, want := range []string{"not saved — using GOOGLE_ADS_REFRESH_TOKEN", "status: ready", "developer token:    set — no longer needed"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("doctor output missing %q:\n%s", want, out)
 		}

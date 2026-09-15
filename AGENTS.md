@@ -55,7 +55,7 @@ go tool staticcheck ./...     # Static analysis
 go test ./... -count=1        # Unit tests (no network; uses httptest)
 
 # Live smoke test against the real API (requires real credentials)
-GOOGLE_ADS_DEVELOPER_TOKEN=… GOOGLE_ADS_CLIENT_ID=… GOOGLE_ADS_CLIENT_SECRET=… \
+GOOGLE_ADS_CLIENT_ID=… GOOGLE_ADS_CLIENT_SECRET=… \
 GOOGLE_ADS_REFRESH_TOKEN=… GOOGLE_ADS_LOGIN_CUSTOMER_ID=… \
 go test -tags integration -count=1 -v ./...
 ```

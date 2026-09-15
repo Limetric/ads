@@ -317,7 +317,7 @@ var errorHints = []struct{ key, hint string }{
 	{"PROHIBITED_SEGMENT_IN_SELECT_OR_WHERE_CLAUSE", "This segment conflicts with other selected fields."},
 	{"MUTUALLY_EXCLUSIVE_FIELDS", "Two or more selected fields cannot be used together."},
 	{"DATE_RANGE_TOO_WIDE", "The date range is too wide for the requested metrics. Try narrowing the date range."},
-	{"AUTHORIZATION_ERROR", "Check your developer token, customer ID, and login customer ID configuration."},
+	{"AUTHORIZATION_ERROR", "Check your customer ID and login customer ID, and that the Google Cloud project behind your OAuth client has Google Ads API access."},
 }
 
 // getErrorHint returns a human-readable hint if the error message contains a

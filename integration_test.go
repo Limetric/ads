@@ -3,7 +3,7 @@
 // Live smoke tests against the real Google Ads API. These are excluded from the
 // default offline suite and only run with the `integration` build tag:
 //
-//	GOOGLE_ADS_DEVELOPER_TOKEN=… GOOGLE_ADS_CLIENT_ID=… GOOGLE_ADS_CLIENT_SECRET=… \
+//	GOOGLE_ADS_CLIENT_ID=… GOOGLE_ADS_CLIENT_SECRET=… \
 //	GOOGLE_ADS_REFRESH_TOKEN=… GOOGLE_ADS_LOGIN_CUSTOMER_ID=… \
 //	go test -tags integration -count=1 -v ./...
 //

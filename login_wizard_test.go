@@ -97,33 +97,6 @@ func TestWizardGatherClient_ReuseExisting(t *testing.T) {
 	}
 }
 
-func TestWizardGatherDeveloperToken_FreshAndEmptyReprompt(t *testing.T) {
-	// open? no; first secret empty → reprompt; second secret valid.
-	p := &fakePrompter{confirms: []bool{false}, lines: []string{""}, secrets: []string{"", "devtok"}}
-	var out strings.Builder
-	tok, err := wizardGatherDeveloperToken(p, &out, &GoogleConfig{}, func(string) error { return nil })
-	if err != nil {
-		t.Fatal(err)
-	}
-	if tok != "devtok" {
-		t.Fatalf("got %q", tok)
-	}
-	if !strings.Contains(out.String(), "can't be empty") {
-		t.Errorf("expected empty-token message, got %s", out.String())
-	}
-}
-
-func TestWizardGatherDeveloperToken_Reuse(t *testing.T) {
-	p := &fakePrompter{confirms: []bool{true}} // Keep it? → yes
-	tok, err := wizardGatherDeveloperToken(p, io.Discard, &GoogleConfig{DeveloperToken: "old"}, func(string) error { return nil })
-	if err != nil {
-		t.Fatal(err)
-	}
-	if tok != "old" {
-		t.Fatalf("got %q", tok)
-	}
-}
-
 func TestWizardGatherLoginCustomerID(t *testing.T) {
 	// Provided value, dashes stripped.
 	p := &fakePrompter{lines: []string{"123-456-7890"}}
@@ -283,19 +256,24 @@ func TestRunLoginWizard_HappyPath(t *testing.T) {
 		return nil
 	}
 
-	// Scripted answers, in call order:
-	//   confirms: step1 open? n, step2 open? n, step3 open? y (fires callback), step4 open? n
-	//   lines:    step1 enter, step2 enter, JSON path, step4 enter, login id (skip)
-	//   secrets:  developer token
+	// Scripted answers, in call order — no developer-token step, so no secrets:
+	//   confirms: step1 enable open? n, step1 access open? n, step2 open? n,
+	//             step3 open? y (fires callback)
+	//   lines:    step1 enable enter, step1 access enter, step2 enter, JSON path,
+	//             login id (skip)
 	p := &fakePrompter{
-		confirms: []bool{false, false, true, false},
-		lines:    []string{"", "", jsonPath, "", ""},
-		secrets:  []string{"devtok"},
+		confirms: []bool{false, false, false, true},
+		lines:    []string{"", "", "", jsonPath, ""},
 	}
 
 	var out strings.Builder
 	if err := runLoginWizard(context.Background(), &out, p, cfg, openFn, port); err != nil {
 		t.Fatalf("wizard failed: %v\n%s", err, out.String())
+	}
+	// Verification passes with Test Account access, so setup must point at the
+	// page where the project's access level is raised.
+	if !strings.Contains(out.String(), urlAPIOverview) {
+		t.Errorf("wizard never pointed at the Google Ads API Overview page:\n%s", out.String())
 	}
 
 	if !strings.Contains(out.String(), "Connected") || !strings.Contains(out.String(), "123-456-7890") {
@@ -310,8 +288,14 @@ func TestRunLoginWizard_HappyPath(t *testing.T) {
 	if _, err := toml.DecodeFile(target, &written); err != nil {
 		t.Fatal(err)
 	}
-	if written.ClientID != "cid" || written.DeveloperToken != "devtok" {
+	if written.ClientID != "cid" {
 		t.Errorf("config not fully written: %+v", written)
+	}
+	if written.DeveloperToken != "" {
+		t.Errorf("the wizard must not write a developer token: %+v", written)
+	}
+	if p.si != 0 {
+		t.Errorf("the wizard must not prompt for a secret, secrets=%d", p.si)
 	}
 	if written.RefreshToken != "" {
 		t.Errorf("refresh_token must not be written to the config file: %+v", written)
@@ -566,7 +550,7 @@ func TestRunLoginWizard_SignInOnlyWhenSetupComplete(t *testing.T) {
 		t.Fatalf("wizard failed: %v\n%s", err, out.String())
 	}
 	got := out.String()
-	if strings.Contains(got, "Step 1/5") || strings.Contains(got, "Welcome to ads") {
+	if strings.Contains(got, "Step 1/4") || strings.Contains(got, "Welcome to ads") {
 		t.Errorf("sign-in-only path replayed the full wizard:\n%s", got)
 	}
 	if !strings.Contains(got, "Found an existing Google Ads setup") || !strings.Contains(got, "111-222-3333") {
@@ -613,7 +597,8 @@ func TestRunLoginWizard_DeclineSignInOnlyRunsFullWizard(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeFileHelper(target, "client_id = \"cid\"\nclient_secret = \"csec\"\ndeveloper_token = \"devtok\"\n"); err != nil {
+	// No developer token: an OAuth client alone is a complete setup.
+	if err := writeFileHelper(target, "client_id = \"cid\"\nclient_secret = \"csec\"\n"); err != nil {
 		t.Fatal(err)
 	}
 	cfg, err := loadLoginConfig("")
@@ -621,21 +606,21 @@ func TestRunLoginWizard_DeclineSignInOnlyRunsFullWizard(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// confirms: keep setup? n, step1 open? n, keep client? y, open browser? y,
-	//           keep dev token? y
-	// lines:    step1 enter, login id (skip)
+	// confirms: keep setup? n, step1 enable open? n, step1 access open? n,
+	//           keep client? y, open browser? y
+	// lines:    step1 enable enter, step1 access enter, login id (skip)
 	p := &fakePrompter{
-		confirms: []bool{false, false, true, true, true},
-		lines:    []string{"", ""},
+		confirms: []bool{false, false, false, true, true},
+		lines:    []string{"", "", ""},
 	}
 	var out strings.Builder
 	if err := runLoginWizard(context.Background(), &out, p, cfg, openFn, port); err != nil {
 		t.Fatalf("wizard failed: %v\n%s", err, out.String())
 	}
-	if !strings.Contains(out.String(), "Step 1/5") || !strings.Contains(out.String(), "Connected") {
+	if !strings.Contains(out.String(), "Step 1/4") || !strings.Contains(out.String(), "Connected") {
 		t.Errorf("expected full wizard run:\n%s", out.String())
 	}
-	if p.ci != 5 || p.li != 2 {
+	if p.ci != 5 || p.li != 3 {
 		t.Errorf("unexpected prompt counts: confirms=%d lines=%d", p.ci, p.li)
 	}
 }
@@ -647,9 +632,10 @@ func TestWizardSetupComplete(t *testing.T) {
 		want bool
 	}{
 		{"empty", GoogleConfig{}, false},
-		{"client only", GoogleConfig{ClientID: "a", ClientSecret: "b"}, false},
+		{"client id only", GoogleConfig{ClientID: "a"}, false},
 		{"dev token only", GoogleConfig{DeveloperToken: "d"}, false},
-		{"complete", GoogleConfig{ClientID: "a", ClientSecret: "b", DeveloperToken: "d"}, true},
+		{"client without dev token", GoogleConfig{ClientID: "a", ClientSecret: "b"}, true},
+		{"client with legacy dev token", GoogleConfig{ClientID: "a", ClientSecret: "b", DeveloperToken: "d"}, true},
 	}
 	for _, c := range cases {
 		if got := wizardSetupComplete(&c.cfg); got != c.want {

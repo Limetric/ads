@@ -55,7 +55,7 @@ func TestRunGoogleDoctorLive_Healthy(t *testing.T) {
 	}
 }
 
-// A test-level developer token passes listAccessibleCustomers but fails a real
+// Test-account access passes listAccessibleCustomers but fails a real
 // query with a definitive 403 — the live check must report NOT READY (liveFailed).
 func TestRunGoogleDoctorLive_TestTokenIsDefinitiveFailure(t *testing.T) {
 	srv := liveServer(t, http.StatusForbidden, testTokenNotApproved)
@@ -73,6 +73,9 @@ func TestRunGoogleDoctorLive_TestTokenIsDefinitiveFailure(t *testing.T) {
 	}
 	if !strings.Contains(got, "✗") || !strings.Contains(got, "DEVELOPER_TOKEN_NOT_APPROVED") || !strings.Contains(got, "apply for Basic or Standard access") {
 		t.Errorf("live query error not surfaced as a definitive failure:\n%s", got)
+	}
+	if !strings.Contains(got, urlAPIOverview) {
+		t.Errorf("access-level failure should point at the Cloud project's Google Ads API Overview page:\n%s", got)
 	}
 }
 

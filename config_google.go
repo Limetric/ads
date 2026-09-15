@@ -17,7 +17,9 @@ import (
 // config before the platform split. A second platform gets its own struct with
 // its own table; reworking the storage layout is tracked separately.
 type GoogleConfig struct {
-	// DeveloperToken is the Google Ads API developer token.
+	// DeveloperToken is the legacy Google Ads API developer token. It is
+	// optional: API access now belongs to the Google Cloud project that owns the
+	// OAuth client, and the API ignores the header. It is still sent when set.
 	DeveloperToken string `toml:"developer_token"`
 	// ClientID / ClientSecret are the installed-app OAuth2 credentials used to
 	// mint access tokens (see auth.go).
@@ -159,9 +161,6 @@ func (c *GoogleConfig) validate() error {
 		return nil
 	}
 	var missing []string
-	if c.DeveloperToken == "" {
-		missing = append(missing, "GOOGLE_ADS_DEVELOPER_TOKEN")
-	}
 	if c.ClientID == "" {
 		missing = append(missing, "GOOGLE_ADS_CLIENT_ID")
 	}

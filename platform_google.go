@@ -66,7 +66,7 @@ var googlePlatform = registerPlatform(&Platform{
 })
 
 // googleConfigured reports whether anything Google-specific has been set up:
-// a developer token, an OAuth client, or a saved sign-in. Any one of them means
+// an OAuth client, a legacy developer token, or a saved sign-in. Any one of them means
 // the user intends to use Google and wants `ads doctor` to say what is missing;
 // none of them means they haven't started, and a plain `ads doctor` should not
 // report that as a broken setup.

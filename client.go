@@ -81,9 +81,13 @@ func (c *Client) resolveCustomerID(explicit string) (string, error) {
 	return "", fmt.Errorf("customer_id is required — pass --customer-id, or set a default with `ads config google set-customer <id>` (or GOOGLE_ADS_CUSTOMER_ID)")
 }
 
-// buildHeaders sets the three headers every Google Ads REST call needs:
-// the OAuth bearer token, the developer token, and (optionally) the
-// login-customer-id of the manager account.
+// buildHeaders sets the headers every Google Ads REST call needs: the OAuth
+// bearer token and (optionally) the login-customer-id of the manager account.
+//
+// The developer-token header is sent only when a token is still configured.
+// API access now belongs to the Google Cloud project that owns the OAuth
+// client, so the API ignores the header — and a future major version will
+// reject it.
 func (c *Client) buildHeaders(req *http.Request) error {
 	tok, err := c.tokens.Token()
 	if err != nil {
@@ -92,11 +96,9 @@ func (c *Client) buildHeaders(req *http.Request) error {
 	req.Header.Set("Authorization", "Bearer "+tok.AccessToken)
 	req.Header.Set("Content-Type", "application/json")
 
-	dev := c.cfg.DeveloperToken
-	if dev == "" && c.cfg.isTest() {
-		dev = "test-developer-token"
+	if c.cfg.DeveloperToken != "" {
+		req.Header.Set("developer-token", c.cfg.DeveloperToken)
 	}
-	req.Header.Set("developer-token", dev)
 
 	if c.cfg.LoginCustomerID != "" {
 		req.Header.Set("login-customer-id", c.cfg.LoginCustomerID)
@@ -250,13 +252,36 @@ type apiErrorDetail struct {
 	} `json:"errors"`
 }
 
+// urlAPIOverview is the Cloud Console page where a project's Google Ads API
+// access level is shown and applied for.
+const urlAPIOverview = "https://console.cloud.google.com/apis/api/googleads.googleapis.com/overview"
+
+// accessLevelHint names the fix for an error caused by a Google Cloud project's
+// Google Ads API access level. Access used to be granted to developer tokens;
+// it now belongs to the project that owns the OAuth client, and nothing in ads'
+// own config can raise it. Returns "" for any other error.
+func accessLevelHint(msg string) string {
+	switch {
+	case strings.Contains(msg, "CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION"),
+		strings.Contains(msg, "DEVELOPER_TOKEN_NOT_APPROVED"):
+		return "fix: the Google Cloud project that owns your OAuth client has only test-account access — apply for Explorer access or higher on its Google Ads API Overview page: " + urlAPIOverview
+	case strings.Contains(msg, "authorizationError.ACTION_NOT_PERMITTED"):
+		// Older API versions return this for a test-access project, but it also
+		// means the signed-in user lacks rights on the account — so the access
+		// level is offered as one cause, not the cause.
+		return "if the signed-in user can manage this account, the Google Cloud project that owns your OAuth client may have only test-account access — check its Google Ads API Overview page: " + urlAPIOverview
+	}
+	return ""
+}
+
 // apiError turns a non-2xx Google Ads response into a readable error.
 //
 // The top-level message is often generic ("The caller does not have
 // permission"). The actionable detail — the specific errorCode and its
-// human-readable message (e.g. DEVELOPER_TOKEN_NOT_APPROVED, "apply for Basic
-// or Standard access") — lives in error.details[].errors[] of a GoogleAdsFailure.
-// We surface those so the CLI tells the user what to actually fix.
+// human-readable message (e.g. CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION) —
+// lives in error.details[].errors[] of a GoogleAdsFailure. We surface those,
+// plus the fix for access-level failures, so the CLI tells the user what to
+// actually fix.
 func apiError(status int, body []byte) error {
 	var e struct {
 		Error struct {
@@ -270,6 +295,9 @@ func apiError(status int, body []byte) error {
 		msg := fmt.Sprintf("google ads API %d (%s): %s", status, e.Error.Status, e.Error.Message)
 		if detail := formatAdsFailures(e.Error.Details); detail != "" {
 			msg += " — " + detail
+		}
+		if hint := accessLevelHint(msg); hint != "" {
+			msg += " — " + hint
 		}
 		return &apiStatusError{status: status, msg: msg}
 	}
@@ -360,7 +388,7 @@ func (c *Client) Search(ctx context.Context, customerID, query string) ([]json.R
 
 // ListAccessibleCustomers returns the bare customer IDs the authenticated user
 // can access. It calls customers:listAccessibleCustomers, which needs only a
-// valid OAuth token and developer token — no customer or login-customer-id — so
+// valid OAuth token — no customer or login-customer-id — so
 // it is the right call to verify a fresh setup works end to end.
 func (c *Client) ListAccessibleCustomers(ctx context.Context) ([]string, error) {
 	var out struct {

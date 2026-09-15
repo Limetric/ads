@@ -166,13 +166,46 @@ func TestGenerateKeywordIdeas(t *testing.T) {
 	}
 }
 
+// The developer-token header is optional — access comes from the Cloud project
+// behind the OAuth client — so it is sent only when a legacy token is configured.
+func TestBuildHeaders_DeveloperTokenOnlyWhenConfigured(t *testing.T) {
+	for _, tc := range []struct{ name, token string }{
+		{"unset", ""},
+		{"legacy token set", "legacy-devtok"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var got []string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				got = r.Header.Values("developer-token")
+				if r.Header.Get("Authorization") == "" {
+					t.Error("Authorization header not set")
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"resourceNames":[]}`))
+			}))
+			defer srv.Close()
+
+			c, err := NewClient(context.Background(), &GoogleConfig{BaseURL: srv.URL, DeveloperToken: tc.token})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := c.ListAccessibleCustomers(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			switch {
+			case tc.token == "" && len(got) != 0:
+				t.Errorf("developer-token header sent without a configured token: %q", got)
+			case tc.token != "" && (len(got) != 1 || got[0] != tc.token):
+				t.Errorf("developer-token header = %q, want [%q]", got, tc.token)
+			}
+		})
+	}
+}
+
 func TestListAccessibleCustomers(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/customers:listAccessibleCustomers" {
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
-		}
-		if r.Header.Get("developer-token") == "" {
-			t.Error("developer-token header not set")
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"resourceNames":["customers/1234567890","customers/9876543210"]}`))

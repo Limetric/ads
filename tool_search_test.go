@@ -31,9 +31,6 @@ func TestRunSearch_Paginates(t *testing.T) {
 		if !strings.HasSuffix(r.URL.Path, "/customers/1234567890/googleAds:search") {
 			t.Errorf("unexpected path %q", r.URL.Path)
 		}
-		if got := r.Header.Get("developer-token"); got == "" {
-			t.Error("developer-token header not set")
-		}
 		if got := r.Header.Get("Authorization"); got != "Bearer test-access-token" {
 			t.Errorf("Authorization = %q", got)
 		}
