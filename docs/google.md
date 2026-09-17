@@ -146,12 +146,13 @@ currency. `ads google accounts info` reports which currency that is.
 
 ## Tool coverage
 
-53 tools, each available as an `ads google …` subcommand and a `google_…` MCP
+65 tools, each available as an `ads google …` subcommand and a `google_…` MCP
 tool. See [`name-map.md`](name-map.md) for the full CLI ↔ MCP map.
 
 **Reads** — `search` (raw GAQL), `report`, `accounts` (+ `accounts info` for
 currency and time zone), `campaigns`, `ads`, keyword performance / search terms
-/ negatives, `geo search` + `geo performance`, `conversions`, `policy`,
+/ negatives, `geo search` + `geo performance`, `conversions`, account / campaign / custom
+conversion goals, `policy`,
 `extensions`, a campaign's criteria, Keyword Planner ideas and forecasts, and
 recommendation listing.
 
@@ -161,8 +162,9 @@ dynamic search ad drafting, keyword add/remove (plus negatives), dynamic ad
 targets, portfolio bidding strategy create/update
 and keyword bids, sitelink/callout/structured-snippet extensions, custom audiences and
 audience targeting, image/YouTube/text asset upload, ad scheduling,
-pause/enable/remove (campaign criteria included), and recommendation
-apply/dismiss.
+pause/enable/remove (campaign criteria included), recommendation
+apply/dismiss, conversion action create/update/remove, and conversion goal
+management (see below).
 
 `campaign create` and `campaign update` carry the budget, the bidding strategy,
 geo/language targeting, and the campaign's **location options** — Google's
@@ -170,6 +172,61 @@ geo/language targeting, and the campaign's **location options** — Google's
 `--positive-geo-target-type` / `--negative-geo-target-type`. The App and
 Performance Max create commands do not take them; set them afterwards with
 `campaign update`.
+
+### Conversion actions and goals
+
+Google groups conversion actions into **goals** by category and origin —
+`PURCHASE:WEBSITE`, `SUBMIT_LEAD_FORM:WEBSITE`, `PHONE_CALL_LEAD:CALL_FROM_ADS`.
+Account goals are the defaults every campaign bids toward; a campaign can
+override them with its own goals, or bid toward a **custom goal** that names an
+explicit set of conversion actions.
+
+```bash
+ads google conversions --format table              # actions, with category, origin, primary
+ads google goals account --format table            # which goals are biddable account-wide
+ads google goals campaign --campaign-id 111        # a campaign's goals + goal source
+ads google goals custom
+```
+
+Account and campaign goals cannot be created or deleted: Google creates one
+whenever a conversion action introduces a new category and origin. They can
+only be made biddable or not:
+
+```bash
+ads google goal set-account --biddable PURCHASE:WEBSITE --not-biddable PAGE_VIEW:WEBSITE
+ads google goal set-campaign --campaign-id 111 --biddable SUBMIT_LEAD_FORM:WEBSITE
+```
+
+An account goal change moves every campaign that follows the account goals, so
+it takes two confirmations. Changing a campaign's goals switches that campaign
+to campaign-level goals, and later account goal changes stop applying to it;
+`goal campaign-config --level CUSTOMER` puts it back (two confirmations, because
+the campaign's own settings are discarded).
+
+Custom goals and conversion actions have full create/update/remove:
+
+```bash
+ads google conversion create --name "Offline leads" --type UPLOAD_CLICKS --category SUBMIT_LEAD_FORM
+ads google conversion update --conversion-action-id 42 --primary=false
+ads google goal create-custom --name "Qualified leads" --conversion-action-id 42 --conversion-action-id 43
+ads google goal campaign-config --campaign-id 111 --custom-goal-id 5
+```
+
+`conversion create` accepts the types the API can create — `WEBPAGE`,
+`UPLOAD_CLICKS`, `UPLOAD_CALLS`, `AD_CALL`, `WEBSITE_CALL`, `CLICK_TO_CALL`,
+`GOOGLE_PLAY_DOWNLOAD`, `GOOGLE_PLAY_IN_APP_PURCHASE`, and
+`STORE_SALES_DIRECT_UPLOAD` (the Google Play types also need `--app-id`, the
+app's Android package name). Firebase, Google Analytics, and third-party app
+conversions come from linking that product in Google Ads. A new action is
+**primary** unless you pass `--primary=false`, which means it drives bidding in
+every campaign whose goals include its category and origin. Changing an
+action's category or primary role takes two confirmations; removing an action
+or a custom goal does too.
+
+With cross-account conversion tracking, conversion actions, account goals, and
+custom goals live on the tracking manager: those commands refuse to stage
+against the client account and name the account to re-run with. Campaign goals
+and `goal campaign-config` always run on the campaign's own account.
 
 ### EU political advertising declaration
 

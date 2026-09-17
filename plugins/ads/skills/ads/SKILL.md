@@ -81,6 +81,7 @@ All Google commands below are prefixed with `ads google`; the shared ones
 | `google keywords performance` / `google keywords search-terms` / `google keywords negative` | keyword metrics, search terms, negatives |
 | `google geo search` / `google geo performance` | find location IDs / geo performance |
 | `google conversions` / `google policy` / `google extensions` | conversion actions / policy issues / extensions |
+| `google goals account` / `google goals campaign` / `google goals custom` | account goals / campaign goals and goal source / custom goals |
 | `google keyword-ideas` / `google keyword-forecasts` | Keyword Planner ideas / recent metrics |
 | `google recommendations list` | active recommendations |
 | `audit` | log of applied writes |
@@ -101,6 +102,10 @@ All Google commands below are prefixed with `ads google`; the shared ones
 | `google asset image` / `google asset text` | upload assets |
 | `google schedule` | set ad schedules |
 | `google pmax create` | create a Performance Max campaign |
+| `google conversion create` / `update` / `remove` | manage conversion actions (`remove` is destructive) |
+| `google goal set-account` / `google goal set-campaign` | make account / campaign goals biddable or not (`--biddable PURCHASE:WEBSITE`) |
+| `google goal campaign-config` | choose a campaign's goal source: account goals, its own, or a custom goal |
+| `google goal create-custom` / `update-custom` / `remove-custom` | manage custom conversion goals |
 | `google pause` / `google enable` / `google remove` | change entity status (`remove` is destructive) |
 | `google recommendations apply` / `google recommendations dismiss` | act on recommendations |
 

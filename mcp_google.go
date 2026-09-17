@@ -76,6 +76,54 @@ func addGoogleTools(reg *toolRegistrar, client *Client) {
 		"List all conversion actions configured in the account.",
 		runConversions)
 
+	addTool(reg, client, "create_conversion_action",
+		"Create a conversion action (WEBPAGE, UPLOAD_CLICKS, call types, ...). Google files it under the goal for its category and origin. Returns a preview + confirm token; pass Confirm to apply.",
+		runCreateConversionAction)
+
+	addTool(reg, client, "update_conversion_action",
+		"Update a conversion action's name, category, counting, primary/secondary role, value, lookback windows, or attribution. Changing category or primary_for_goal takes two confirmations. Returns a preview + confirm token; pass Confirm to apply.",
+		runUpdateConversionAction)
+
+	addTool(reg, client, "remove_conversion_action",
+		"Remove a conversion action. Returns a preview + confirm token; two confirmations are required to apply.",
+		runRemoveConversionAction)
+
+	addTool(reg, client, "account_conversion_goals",
+		"List the account's default conversion goals (category + origin pairs, e.g. PURCHASE/WEBSITE) and whether each is biddable.",
+		runAccountConversionGoals)
+
+	addTool(reg, client, "campaign_conversion_goals",
+		"List campaign conversion goals and each campaign's goal config: whether it follows the account goals (CUSTOMER) or its own (CAMPAIGN), and any custom goal.",
+		runCampaignConversionGoals)
+
+	addTool(reg, client, "custom_conversion_goals",
+		"List custom conversion goals and the conversion actions each bids toward.",
+		runCustomConversionGoals)
+
+	addTool(reg, client, "update_account_conversion_goals",
+		"Make account-level conversion goals biddable or not (CATEGORY:ORIGIN). Affects every campaign following the account goals, so two confirmations are required.",
+		runUpdateAccountConversionGoals)
+
+	addTool(reg, client, "update_campaign_conversion_goals",
+		"Make one campaign's conversion goals biddable or not (CATEGORY:ORIGIN); the campaign stops following the account goals. Returns a preview + confirm token; pass Confirm to apply.",
+		runUpdateCampaignConversionGoals)
+
+	addTool(reg, client, "update_campaign_goal_config",
+		"Choose where a campaign takes its goals from: the account goals (CUSTOMER), its own (CAMPAIGN), or a custom conversion goal. Returning to CUSTOMER takes two confirmations. Returns a preview + confirm token; pass Confirm to apply.",
+		runUpdateCampaignGoalConfig)
+
+	addTool(reg, client, "create_custom_conversion_goal",
+		"Create a custom conversion goal from a set of conversion actions. Returns a preview + confirm token; pass Confirm to apply.",
+		runCreateCustomConversionGoal)
+
+	addTool(reg, client, "update_custom_conversion_goal",
+		"Rename a custom conversion goal or replace its conversion actions (a new action set takes two confirmations). Returns a preview + confirm token; pass Confirm to apply.",
+		runUpdateCustomConversionGoal)
+
+	addTool(reg, client, "remove_custom_conversion_goal",
+		"Remove a custom conversion goal. Returns a preview + confirm token; two confirmations are required to apply.",
+		runRemoveCustomConversionGoal)
+
 	addTool(reg, client, "policy",
 		"List ads with policy issues (disapproved, limited, under review).",
 		runPolicy)
