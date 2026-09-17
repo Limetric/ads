@@ -23,11 +23,11 @@ actually landed.
    rename, and keeping aliases would re-take the exact names the next platform
    wants.
 
-> #36 says 52 MCP tools; the tree actually registers **53** — 49 at the time of
+> #36 says 52 MCP tools; the tree actually registers **65** — 49 at the time of
 > the rename, plus what has landed since (marked `—` in the Old column). The
 > count in the issue is stale, not a missing group.
 
-## MCP tools (53)
+## MCP tools (65)
 
 Uniform: every tool gains a `google_` prefix, nothing else changes. Descriptions,
 `Args` structs, and handlers are untouched.
@@ -48,6 +48,18 @@ Uniform: every tool gains a `google_` prefix, nothing else changes. Descriptions
 | `geo_targets` | `google_geo_targets` |
 | `geo_performance` | `google_geo_performance` |
 | `conversions` | `google_conversions` |
+| — | `google_create_conversion_action` |
+| — | `google_update_conversion_action` |
+| — | `google_remove_conversion_action` |
+| — | `google_account_conversion_goals` |
+| — | `google_campaign_conversion_goals` |
+| — | `google_custom_conversion_goals` |
+| — | `google_update_account_conversion_goals` |
+| — | `google_update_campaign_conversion_goals` |
+| — | `google_update_campaign_goal_config` |
+| — | `google_create_custom_conversion_goal` |
+| — | `google_update_custom_conversion_goal` |
+| — | `google_remove_custom_conversion_goal` |
 | `policy` | `google_policy` |
 | `extensions` | `google_extensions` |
 | `keyword_ideas` | `google_keyword_ideas` |
@@ -123,12 +135,24 @@ commands in total. The subcommand trees below each are untouched.
 | — | `ads google campaign criteria` |
 | `goads campaigns` | `ads google campaigns` |
 | `goads conversions` | `ads google conversions` |
+| — | `ads google conversion create` |
+| — | `ads google conversion update` |
+| — | `ads google conversion remove` |
 | `goads enable` | `ads google enable` |
 | `goads extension sitelinks` | `ads google extension sitelinks` |
 | `goads extension callouts` | `ads google extension callouts` |
 | `goads extension snippets` | `ads google extension snippets` |
 | `goads extension remove` | `ads google extension remove` |
 | `goads extensions` | `ads google extensions` |
+| — | `ads google goal set-account` |
+| — | `ads google goal set-campaign` |
+| — | `ads google goal campaign-config` |
+| — | `ads google goal create-custom` |
+| — | `ads google goal update-custom` |
+| — | `ads google goal remove-custom` |
+| — | `ads google goals account` |
+| — | `ads google goals campaign` |
+| — | `ads google goals custom` |
 | `goads geo search` | `ads google geo search` |
 | `goads geo performance` | `ads google geo performance` |
 | `goads keyword-forecasts` | `ads google keyword-forecasts` |
