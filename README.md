@@ -8,8 +8,7 @@ lets it act: create a campaign, change a budget, adjust a bid, all through the
 same preview-then-confirm flow you'd use by hand. Google Ads and Microsoft
 Advertising (Bing Ads) are supported today, with more platforms on the way.
 And it's a direct line — `ads` talks straight to the Google Ads and Microsoft
-Advertising APIs from your own machine, with no relay server in between to
-see your data or credentials.
+Advertising APIs from your own machine.
 
 It ships as a single binary with two front-ends over one shared set of tools:
 
@@ -78,7 +77,7 @@ non-interactive `--no-input` path for CI are in
 
 ### As an MCP server
 
-`ads mcp` serves the same tools over stdio to MCP hosts, under their platform
+`ads mcp` serves the tools over stdio to MCP hosts, under their platform
 prefix — `google_search`, `google_campaigns`, `google_set_campaign_budget`, …
 See [`docs/mcp.md`](docs/mcp.md) for host config and credentials.
 
