@@ -409,6 +409,33 @@ var allowedMutateOps = map[string]bool{
 	"userListOperation":                     true,
 }
 
+// noPartialFailureOps are the MutateOperation keys whose services have no
+// partial_failure field: googleAds:mutate rejects a batch holding any of them
+// with OPERATION_DOES_NOT_SUPPORT_PARTIAL_FAILURE when partialFailure is set
+// (issue #74). Such a batch is sent atomically instead — it applies in full or
+// not at all.
+var noPartialFailureOps = map[string]bool{
+	"campaignConversionGoalOperation":       true,
+	"conversionGoalCampaignConfigOperation": true,
+	"customConversionGoalOperation":         true,
+	"customerConversionGoalOperation":       true,
+	"customerOperation":                     true,
+}
+
+// supportsPartialFailure reports whether a batch may be sent with
+// partialFailure enabled: only when none of its operations forbid it.
+func supportsPartialFailure(ops []any) bool {
+	for _, op := range ops {
+		m, _ := op.(map[string]any)
+		for key := range m {
+			if noPartialFailureOps[key] {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // validateMutateOps verifies every operation uses a top-level key from
 // allowedMutateOps, returning an actionable error on the first offender. This
 // runs before any HTTP traffic (see Client.Mutate).

@@ -425,15 +425,20 @@ func (r *MutateResponse) operationResults() []json.RawMessage {
 // responsible for guarding writes (see safety.go) before reaching this point.
 //
 // Unknown top-level operation keys are rejected client-side (validateMutateOps)
-// before any HTTP traffic, and partialFailure is enabled so a bad op in a batch
-// surfaces as a per-op error rather than failing the whole request.
+// before any HTTP traffic. partialFailure is enabled so a bad op in a batch
+// surfaces as a per-op error rather than failing the whole request — except for
+// a batch holding an operation that forbids it (see noPartialFailureOps), which
+// is sent atomically.
 func (c *Client) Mutate(ctx context.Context, customerID string, ops []any) (*MutateResponse, error) {
 	if err := validateMutateOps(ops); err != nil {
 		return nil, err
 	}
 	customerID = normalizeCustomerID(customerID)
 	path := fmt.Sprintf("customers/%s/googleAds:mutate", customerID)
-	body := map[string]any{"mutateOperations": ops, "partialFailure": true}
+	body := map[string]any{"mutateOperations": ops}
+	if supportsPartialFailure(ops) {
+		body["partialFailure"] = true
+	}
 	var out MutateResponse
 	if err := c.postWrite(ctx, path, body, &out); err != nil {
 		return nil, err
