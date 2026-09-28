@@ -127,13 +127,31 @@ func TestMutate_ValidatesAndSetsPartialFailure(t *testing.T) {
 		t.Fatal("server should not have been called for an invalid op")
 	}
 
-	// Good op is sent with partialFailure set.
-	_, err := c.Mutate(context.Background(), "123", []any{map[string]any{"campaignBudgetOperation": map[string]any{"update": map[string]any{}}}})
-	if err != nil {
-		t.Fatalf("Mutate: %v", err)
-	}
-	if pf, ok := gotBody["partialFailure"].(bool); !ok || !pf {
-		t.Errorf("partialFailure not set in body: %v", gotBody)
+	// partialFailure is set unless an operation in the batch forbids it (#74).
+	budget := map[string]any{"campaignBudgetOperation": map[string]any{"update": map[string]any{}}}
+	goal := map[string]any{"campaignConversionGoalOperation": map[string]any{"update": map[string]any{}}}
+	for name, tc := range map[string]struct {
+		ops         []any
+		wantPartial bool
+	}{
+		"supported op":              {[]any{budget}, true},
+		"conversion goal op":        {[]any{goal}, false},
+		"batch mixing both":         {[]any{budget, goal}, false},
+		"custom conversion goal op": {[]any{map[string]any{"customConversionGoalOperation": map[string]any{"remove": "x"}}}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			gotBody = nil
+			if _, err := c.Mutate(context.Background(), "123", tc.ops); err != nil {
+				t.Fatalf("Mutate: %v", err)
+			}
+			pf, present := gotBody["partialFailure"]
+			if tc.wantPartial && pf != true {
+				t.Errorf("partialFailure not set in body: %v", gotBody)
+			}
+			if !tc.wantPartial && present {
+				t.Errorf("partialFailure must be omitted for this batch: %v", gotBody)
+			}
+		})
 	}
 }
 

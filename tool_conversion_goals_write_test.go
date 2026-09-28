@@ -35,6 +35,18 @@ func goalOp(t *testing.T, capture *conversionCapture, i int, key string) map[str
 	return op
 }
 
+// assertAtomic fails unless the last mutate left out partialFailure, which
+// the conversion goal operations reject (issue #74).
+func assertAtomic(t *testing.T, capture *conversionCapture) {
+	t.Helper()
+	if capture.mutates == 0 {
+		t.Fatal("no mutate was sent")
+	}
+	if pf, present := capture.lastBody["partialFailure"]; present {
+		t.Errorf("mutate sent partialFailure=%v; conversion goal operations reject it", pf)
+	}
+}
+
 func TestParseGoalChanges(t *testing.T) {
 	changes, err := parseGoalChanges([]string{" purchase:website "}, []string{"PAGE_VIEW:WEBSITE"})
 	if err != nil {
@@ -80,6 +92,7 @@ func TestUpdateAccountConversionGoals_StagesEveryGoalWithTwoConfirmations(t *tes
 	if rounds != 2 {
 		t.Errorf("took %d confirmations, want 2", rounds)
 	}
+	assertAtomic(t, capture)
 	for i, want := range []struct {
 		resource string
 		biddable bool
@@ -147,6 +160,7 @@ func TestUpdateCampaignConversionGoals(t *testing.T) {
 			if rounds != 1 {
 				t.Errorf("took %d confirmations, want 1", rounds)
 			}
+			assertAtomic(t, capture)
 			update, _ := goalOp(t, capture, 0, "campaignConversionGoalOperation")["update"].(map[string]any)
 			if update["resourceName"] != "customers/1/campaignConversionGoals/7~SIGNUP~APP" || update["biddable"] != true {
 				t.Errorf("update = %v", update)
@@ -220,6 +234,7 @@ func TestUpdateCampaignGoalConfig(t *testing.T) {
 			if rounds != tc.wantRounds {
 				t.Errorf("took %d confirmations, want %d", rounds, tc.wantRounds)
 			}
+			assertAtomic(t, capture)
 			op := goalOp(t, capture, 0, "conversionGoalCampaignConfigOperation")
 			update, _ := op["update"].(map[string]any)
 			if op["updateMask"] != tc.wantMask || update["resourceName"] != "customers/1/conversionGoalCampaignConfigs/7" {
@@ -298,6 +313,7 @@ func TestCreateCustomConversionGoal(t *testing.T) {
 	}); rounds != 1 {
 		t.Errorf("took %d confirmations, want 1", rounds)
 	}
+	assertAtomic(t, capture)
 	create := opCreate(t, capture.ops(t)[0], "customConversionGoalOperation")
 	actions, _ := create["conversionActions"].([]any)
 	if create["name"] != "Leads" || create["status"] != "ENABLED" || len(actions) != 2 ||
@@ -358,6 +374,7 @@ func TestUpdateCustomConversionGoal(t *testing.T) {
 			}); rounds != tc.wantRounds {
 				t.Errorf("took %d confirmations, want %d", rounds, tc.wantRounds)
 			}
+			assertAtomic(t, capture)
 			op := goalOp(t, capture, 0, "customConversionGoalOperation")
 			update, _ := op["update"].(map[string]any)
 			if op["updateMask"] != tc.wantMask || update["resourceName"] != "customers/1/customConversionGoals/5" {
@@ -385,6 +402,7 @@ func TestRemoveCustomConversionGoal_TakesTwoConfirmations(t *testing.T) {
 	}); rounds != 2 {
 		t.Errorf("took %d confirmations, want 2", rounds)
 	}
+	assertAtomic(t, capture)
 	if op := goalOp(t, capture, 0, "customConversionGoalOperation"); op["remove"] != "customers/1/customConversionGoals/5" {
 		t.Errorf("op = %v", op)
 	}
